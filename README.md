@@ -2,6 +2,8 @@
 
 [English](./README.en.md)
 
+[在线演示](https://peerto.aside0.me)
+
 Peerto 是一个浏览器里的点对点消息和文件传输工具。界面接近常见的聊天应用，但它不是聊天室：消息和文件通过 WebRTC DataChannel 在设备之间传输，应用服务器只负责页面、短时连接码和建链信令。
 
 ## 能做什么

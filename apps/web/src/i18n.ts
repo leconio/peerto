@@ -1,16 +1,18 @@
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
+import {
+  type AppLanguage,
+  resolveInitialLanguage,
+} from "./lib/language";
 import { en } from "./locales/en";
 import { zh } from "./locales/zh";
 
-export type AppLanguage = "zh" | "en";
+export type { AppLanguage } from "./lib/language";
 
 const LANGUAGE_KEY = "peerto-language";
 
 function initialLanguage(): AppLanguage {
-  const saved = localStorage.getItem(LANGUAGE_KEY);
-  if (saved === "zh" || saved === "en") return saved;
-  return navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en";
+  return resolveInitialLanguage(localStorage.getItem(LANGUAGE_KEY));
 }
 
 const initialization = i18n.use(initReactI18next).init({

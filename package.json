@@ -4,7 +4,7 @@
   "description": "Browser-to-browser messages and file transfers over WebRTC",
   "license": "MIT",
   "author": "Peerto contributors",
-  "homepage": "https://github.com/leconio/peerto#readme",
+  "homepage": "https://peerto.aside0.me",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/leconio/peerto.git"

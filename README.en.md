@@ -2,6 +2,8 @@
 
 [中文](./README.md)
 
+[Live demo](https://peerto.aside0.me)
+
 Peerto sends messages and files directly between browsers with WebRTC DataChannel. It looks like a chat app, but it is not a hosted chat service. The application server serves the web app, issues short-lived connection codes, and relays signaling only while two devices connect.
 
 ## Features
