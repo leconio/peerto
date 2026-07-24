@@ -4,18 +4,18 @@ import process from "node:process";
 
 const root = process.cwd();
 const pairs = [
-  ["README.md", "README.en.md"],
-  ["ARCHITECTURE.md", "ARCHITECTURE.en.md"],
-  ["CHANGELOG.md", "CHANGELOG.en.md"],
-  ["CODE_OF_CONDUCT.md", "CODE_OF_CONDUCT.en.md"],
-  ["CONTRIBUTING.md", "CONTRIBUTING.en.md"],
-  ["REQUIREMENTS.md", "REQUIREMENTS.en.md"],
-  ["SECURITY.md", "SECURITY.en.md"],
-  ["docs/cloudflare.md", "docs/cloudflare.en.md"],
-  ["docs/deployment.md", "docs/deployment.en.md"],
-  ["docs/privacy.md", "docs/privacy.en.md"],
-  ["docs/troubleshooting.md", "docs/troubleshooting.en.md"],
-  ["docs/turn.md", "docs/turn.en.md"],
+  ["README.md", "README.zh-CN.md"],
+  ["ARCHITECTURE.md", "ARCHITECTURE.zh-CN.md"],
+  ["CHANGELOG.md", "CHANGELOG.zh-CN.md"],
+  ["CODE_OF_CONDUCT.md", "CODE_OF_CONDUCT.zh-CN.md"],
+  ["CONTRIBUTING.md", "CONTRIBUTING.zh-CN.md"],
+  ["REQUIREMENTS.md", "REQUIREMENTS.zh-CN.md"],
+  ["SECURITY.md", "SECURITY.zh-CN.md"],
+  ["docs/cloudflare.md", "docs/cloudflare.zh-CN.md"],
+  ["docs/deployment.md", "docs/deployment.zh-CN.md"],
+  ["docs/privacy.md", "docs/privacy.zh-CN.md"],
+  ["docs/troubleshooting.md", "docs/troubleshooting.zh-CN.md"],
+  ["docs/turn.md", "docs/turn.zh-CN.md"],
 ];
 const ignoredDirectories = new Set([
   ".git",
@@ -51,20 +51,20 @@ async function markdownFiles(directory) {
   return files;
 }
 
-for (const [chineseFile, englishFile] of pairs) {
-  const chinesePath = join(root, chineseFile);
+for (const [englishFile, chineseFile] of pairs) {
   const englishPath = join(root, englishFile);
-  if (!(await exists(chinesePath)) || !(await exists(englishPath))) {
-    failures.push(`${chineseFile}: missing bilingual pair`);
+  const chinesePath = join(root, chineseFile);
+  if (!(await exists(englishPath)) || !(await exists(chinesePath))) {
+    failures.push(`${englishFile}: missing bilingual pair`);
     continue;
   }
-  const chinese = await readFile(chinesePath, "utf8");
   const english = await readFile(englishPath, "utf8");
-  if (!chinese.split("\n").slice(0, 6).join("\n").includes(englishFile.split("/").at(-1))) {
-    failures.push(`${chineseFile}: missing English language link`);
-  }
+  const chinese = await readFile(chinesePath, "utf8");
   if (!english.split("\n").slice(0, 6).join("\n").includes(chineseFile.split("/").at(-1))) {
     failures.push(`${englishFile}: missing Chinese language link`);
+  }
+  if (!chinese.split("\n").slice(0, 6).join("\n").includes(englishFile.split("/").at(-1))) {
+    failures.push(`${chineseFile}: missing English language link`);
   }
   if (count(chinese, /^#{1,6} /gm) !== count(english, /^#{1,6} /gm)) {
     failures.push(`${chineseFile}: bilingual heading count differs`);

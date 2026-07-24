@@ -1,5 +1,5 @@
-name: Bug 报告 / Bug report
-description: 报告可以稳定复现的问题 / Report a reproducible problem
+name: Bug report / Bug 报告
+description: Report a reproducible problem / 报告可以稳定复现的问题
 title: "[Bug] "
 labels:
   - bug
@@ -7,47 +7,47 @@ body:
   - type: markdown
     attributes:
       value: |
-        不要提交连接码、分享链接、真实 IP、TURN 密码、Turnstile secret、SDP 或 ICE Candidate。
         Do not post connection codes, share links, real IP addresses, TURN passwords, Turnstile secrets, SDP, or ICE candidates.
+        不要提交连接码、分享链接、真实 IP、TURN 密码、Turnstile secret、SDP 或 ICE Candidate。
   - type: textarea
     id: problem
     attributes:
-      label: 问题 / Problem
-      description: 发生了什么，期望结果是什么？ What happened, and what did you expect?
+      label: Problem / 问题
+      description: What happened, and what did you expect? 发生了什么，期望结果是什么？
     validations:
       required: true
   - type: textarea
     id: steps
     attributes:
-      label: 复现步骤 / Steps to reproduce
+      label: Steps to reproduce / 复现步骤
       placeholder: |
-        1. 打开...
-        2. 连接...
-        3. 看到...
         1. Open...
         2. Connect...
         3. Observe...
+        1. 打开...
+        2. 连接...
+        3. 看到...
     validations:
       required: true
   - type: input
     id: browser
     attributes:
-      label: 浏览器与版本 / Browser and version
+      label: Browser and version / 浏览器与版本
     validations:
       required: true
   - type: input
     id: system
     attributes:
-      label: 操作系统 / Operating system
+      label: Operating system / 操作系统
     validations:
       required: true
   - type: textarea
     id: network
     attributes:
-      label: 两端网络 / Networks
-      description: 例如家庭 Wi-Fi 到移动网络，不要填写真实地址。 For example, home Wi-Fi to mobile data. Do not include real addresses.
+      label: Networks / 两端网络
+      description: For example, home Wi-Fi to mobile data. Do not include real addresses. 例如家庭 Wi-Fi 到移动网络，不要填写真实地址。
   - type: textarea
     id: checks
     attributes:
-      label: 已做检查 / Checks performed
-      description: 是否配置 TURN，换网络后是否仍能复现？ Is TURN configured, and does the issue remain on another network?
+      label: Checks performed / 已做检查
+      description: Is TURN configured, and does the issue remain on another network? 是否配置 TURN，换网络后是否仍能复现？

@@ -1,5 +1,5 @@
-name: 功能建议 / Feature request
-description: 提议一个符合点对点边界的改动 / Propose a change that fits the peer-to-peer scope
+name: Feature request / 功能建议
+description: Propose a change that fits the peer-to-peer scope / 提议一个符合点对点边界的改动
 title: "[Feature] "
 labels:
   - enhancement
@@ -7,22 +7,22 @@ body:
   - type: textarea
     id: use-case
     attributes:
-      label: 使用场景 / Use case
-      description: 先说明遇到的问题，不要只写实现方式。 Describe the problem before proposing an implementation.
+      label: Use case / 使用场景
+      description: Describe the problem before proposing an implementation. 先说明遇到的问题，不要只写实现方式。
     validations:
       required: true
   - type: textarea
     id: proposal
     attributes:
-      label: 建议方案 / Proposal
+      label: Proposal / 建议方案
     validations:
       required: true
   - type: checkboxes
     id: impact
     attributes:
-      label: 影响范围 / Impact
+      label: Impact / 影响范围
       options:
-        - label: 会改变前后端共享协议 / Changes the shared client-server protocol
-        - label: 会改变浏览器本地存储 / Changes browser-local storage
-        - label: 会引入新的服务端持久化 / Adds server-side persistence
-        - label: 会改变消息或文件的数据路径 / Changes the message or file data path
+        - label: Changes the shared client-server protocol / 会改变前后端共享协议
+        - label: Changes browser-local storage / 会改变浏览器本地存储
+        - label: Adds server-side persistence / 会引入新的服务端持久化
+        - label: Changes the message or file data path / 会改变消息或文件的数据路径

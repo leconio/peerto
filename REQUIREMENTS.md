@@ -1,36 +1,36 @@
-# Peerto 需求与实现说明
+# Peerto requirements and implementation
 
-[English](./REQUIREMENTS.en.md)
+[中文](./REQUIREMENTS.zh-CN.md)
 
-> 文档状态：MVP v1
+> Status: MVP v1
 >
-> 日期：2026-07-23
+> Date: 2026-07-23
 >
-> 部署：单 Docker 容器，无数据库、无 Redis
-> 连接范围：每个会话 1 对 1，同一浏览器支持多设备并发连接
+> Deployment: one Docker container, no database, no Redis
+> Connection scope: each conversation is one-to-one, with concurrent device connections in one browser
 
-## 1. 产品边界
+## 1. Product boundary
 
-Peerto 是类似 Telegram Web 会话界面的点对点传输工具：
+Peerto is a peer-to-peer transfer tool with a conversation interface similar to Telegram Web:
 
-- 左侧会话流第一项固定为“我的”，其后为已配对设备。
-- 右侧为当前本地会话。
-- 主机生成唯一一处 6 位连接码。
-- 生成与输入连接码入口固定在左栏底部；不再显示旧连接状态栏。
-- 文本和文件只通过 WebRTC DataChannel 传输。
-- 服务端不保存、代理或检查消息和文件内容。
-- 当前不是聊天室，不提供账号、联系人在线目录、群聊、离线消息或云端历史。
-- 每个设备会话独立维护 WebRTC、DataChannel、心跳、路由和文件传输状态。活动设备连接上限保存在本机，默认 4，可配置为 1 至 32；上限内切换会话不应断开其他已在线设备。
+- The first conversation in the left column is always "Mine", followed by paired devices.
+- The right side shows the current local conversation.
+- The host generates a 6-digit connection code in one place.
+- Code creation and entry stay at the bottom of the left column. The old connection status bar is not shown.
+- Text and files travel only over WebRTC DataChannel.
+- The server does not store, proxy, or inspect message and file content.
+- Peerto is not a chat service. It has no accounts, online contact directory, groups, offline messages, or cloud history.
+- Each device session owns its WebRTC connection, DataChannels, heartbeat, route, and file transfer state. The active connection limit is stored locally, defaults to 4, and can be set from 1 to 32. Switching conversations within the limit must not disconnect other online devices.
 
-浏览器本地保存：
+The browser stores:
 
-- `localStorage`：设备名称、主题、已知设备、恢复凭证、消息和文件元数据。
-- IndexedDB：P-256 设备私钥、浏览器允许持久化的文件句柄。
-- OPFS：接收文件和无法取得持久文件句柄时的本机资源内容。资源不会上传服务器，可由用户单独删除、全部清空，或随会话删除。
+- `localStorage`: device name, theme, known devices, recovery credentials, messages, and file metadata.
+- IndexedDB: the P-256 device private key and file handles the browser allows to persist.
+- OPFS: received files and local resource content when a persistent file handle is unavailable. Resources are never uploaded to the server. A user can remove one resource, clear all resources, or remove them with a conversation.
 
-本版本不兼容旧 PWA，不保留旧存储迁移、旧 REST/WSS 字段或旧文件分块协议。
+This version does not support old PWA builds. It contains no migration for old storage, REST/WSS fields, or file chunk protocols.
 
-## 2. 最小架构
+## 2. Minimal architecture
 
 ```text
 Browser A ── REST + temporary WSS ── Peerto App
@@ -39,124 +39,124 @@ Browser B ── REST + temporary WSS ──┘
 Browser A ═════ WebRTC DataChannel ═════ Browser B
 ```
 
-Peerto App 单进程同时提供：
+One Peerto App process provides:
 
-- 构建后的 PWA 静态资源。
-- 创建房间和恢复登记 REST API。
-- SDP/ICE 临时 WebSocket 信令。
-- 有容量上限和 TTL 的进程内状态。
-- 单实例内存限流。
+- Built PWA static files.
+- REST APIs for room creation and recovery registration.
+- Temporary WebSocket signaling for SDP and ICE.
+- Bounded in-memory state with TTL.
+- In-process rate limits for a single instance.
 
-不使用：
+It does not use:
 
-- Redis 或其他数据库。
-- HTTP 轮询。
-- 应用启动后的全量设备自动连接。
-- DataChannel 上线后的常驻信令 WebSocket。
-- 应用私有 TURN 协议。
+- Redis or another database.
+- HTTP polling.
+- Automatic connection to every device when the app starts.
+- A permanent signaling WebSocket after DataChannel opens.
+- A private TURN protocol owned by the application.
 
-## 3. 建链与信令生命周期
+## 3. Connection and signaling lifecycle
 
-### 3.1 首次连接
+### 3.1 First connection
 
-1. 主机生成 P-256 设备密钥和 6 位短时码。
-   - 同一浏览器会话内，已生成、未使用且未过期的码保持等待；关闭弹窗后再次点击直接显示原码，不重复申请。
-2. 服务端把待连接房间、主机来源 IP、随机 Host/分享/恢复凭证写入 TTL 内存。
-3. 主机建立临时 WSS，并用设备私钥完成 challenge。
-4. 用户机输入 6 位码或打开分享链接。
-5. 用户机建立临时 WSS，并完成设备私钥 challenge。
-6. 普通码由主机确认；有效分享凭证自动确认。
-7. 服务端转发 Offer、Answer、ICE Candidate 和必要的 ICE restart。
-8. 双方分别在 `control` DataChannel 打开后发送 `connected`。
-9. 只有两端都确认后，服务端删除房间，发送 `room_consumed`，再正常关闭两条 WSS。
-10. 浏览器把该次 WSS 关闭识别为预期行为，保持 P2P 在线。
+1. The host creates a P-256 device key and a short-lived 6-digit code.
+   - An unused and unexpired code remains active in the same browser session. Closing and reopening the dialog shows the same code instead of requesting another one.
+2. The server writes the pending room, host source IP, and random host, share, and recovery credentials to TTL memory.
+3. The host opens a temporary WSS connection and completes a challenge with its device private key.
+4. The guest enters the 6-digit code or opens a share link.
+5. The guest opens a temporary WSS connection and completes its device key challenge.
+6. A regular code requires host approval. A valid share credential is approved automatically.
+7. The server forwards the offer, answer, ICE candidates, and any required ICE restart messages.
+8. Each side sends `connected` after its `control` DataChannel opens.
+9. Only after both sides confirm, the server deletes the room, sends `room_consumed`, and closes both WSS connections normally.
+10. Each browser treats that WSS closure as expected and keeps the P2P connection online.
 
-短码成功消费后不能再次加入。分享凭证与房间同步失效。
+A consumed short code cannot be joined again. The share credential expires with its room.
 
-### 3.2 已知设备恢复
+### 3.2 Recovery for known devices
 
-- 验证码只负责首次身份确认。
-- 配对后双方本地保存相同高熵恢复令牌、自己的私钥和对端设备身份。
-- 用户点击已知设备对话时才调用恢复 API；未打开的对话不产生网络连接。
-- 已经上线的设备在活动连接上限内切换到其他对话后保持连接；达到上限时先回收最久未使用的离线客户端，再断开最久未使用且不是当前打开会话的后台连接。未曾连接或已经离线的设备仍只在用户进入其对话时恢复。
-- 恢复请求只提交设备身份、对端设备 ID、6 位命名空间和恢复令牌，不提交或缓存 ICE 地址。
-- 第一个到达的设备成为临时 Host 并等待，第二个成为 Guest。
-- 双方重新完成设备私钥 challenge，再交换 WebRTC 信令。
-- 服务端内存、容器或短时登记全部丢失不影响身份根；两端仍有本地凭证时可重新建立会合。
-- 若本地私钥或恢复令牌被清除，必须重新通过连接码或分享链接配对。
+- The connection code verifies identity only for the first pairing.
+- After pairing, both browsers store the same high-entropy recovery token, their own private key, and the peer identity.
+- Recovery starts only when the user opens a known device conversation. Closed conversations do not create network connections.
+- Online devices remain connected when the user switches conversations, up to the active connection limit. At the limit, Peerto first removes the least recently used offline client, then disconnects the least recently used online client that is not open. A device that has never connected or is already offline recovers only when its conversation is opened.
+- A recovery request sends the device identity, peer device ID, 6-digit namespace, and recovery token. It does not send or cache ICE addresses.
+- The first device to register becomes the temporary host and waits. The second becomes the guest.
+- Both devices repeat the private key challenge before exchanging WebRTC signaling.
+- Loss of server memory, a container, or temporary registration does not remove the identity root. The two browsers can meet again while both still have their local credentials.
+- If a private key or recovery token is cleared locally, the devices must pair again with a code or share link.
 
-### 3.3 断线重试
+### 3.3 Retry after disconnect
 
-- P2P 短暂 `disconnected` 时先等待 4 秒。
-- 临时信令仍存在时最多做两次 ICE restart，每次连接窗口 15 秒。
-- 信令已按预期关闭后，P2P 真正断开会触发当前对话的恢复登记。
-- 重试采用指数退避，上限 30 秒，界面显示次数、立即重试和取消。
-- 两个设备同时打开同一已知对话时，都执行同一登记流程，能够自动选出 Host/Guest。
-- 重试遮罩存在时锁定该会话的其他交互。
+- A briefly `disconnected` P2P connection waits 4 seconds.
+- While temporary signaling still exists, Peerto attempts at most two ICE restarts. Each attempt has a 15-second connection window.
+- After signaling has closed as expected, a real P2P disconnect starts recovery registration for the open conversation.
+- Retries use exponential backoff capped at 30 seconds. The UI shows the attempt number, Retry now, and Cancel.
+- If both devices open the same known conversation, each follows the same registration flow and they select host and guest automatically.
+- While the retry overlay is visible, other actions in that conversation are disabled.
 
-## 4. 服务端内存状态
+## 4. In-memory server state
 
-服务端只保存可随时丢弃的临时数据：
+The server stores only temporary state that can be discarded:
 
-| 状态 | 默认上限 | TTL/释放方式 |
+| State | Default limit | TTL or release condition |
 |---|---:|---|
-| 待连接房间 | 2000 | 默认 5 分钟、成功连接或断开时释放 |
-| 恢复凭证命名空间 | 5000 | 滑动 5 分钟 |
-| 单凭证设备身份 | 64 | 随命名空间释放 |
-| 限流桶 | 50000 | 固定窗口到期释放 |
-| 单 IP 活跃临时 WSS | 12 | 连接关闭时释放 |
+| Pending rooms | 2000 | 5 minutes by default, successful connection, or disconnect |
+| Recovery credential namespaces | 5000 | Sliding 5 minutes |
+| Device identities per credential | 64 | Released with the namespace |
+| Rate-limit buckets | 50000 | Fixed window expiry |
+| Active temporary WSS per IP | 12 | Connection close |
 
-实现要求：
+Implementation requirements:
 
-- 使用一个共享清理定时器，不为每条 Map 记录创建定时器。
-- 所有读取先惰性清理过期值。
-- 达到容量后先清理过期值；仍满则失败关闭，不无限增长。
-- 健康检查只返回服务状态，不公开房间数和其他内部统计。
-- 只支持单实例。若未来需要多副本，必须引入共享协调层或会话粘性；不在当前范围。
+- Use one shared cleanup timer rather than one timer per map record.
+- Lazily remove expired values before every read.
+- When a capacity limit is reached, remove expired values first. If the store is still full, fail closed instead of growing without a bound.
+- The health endpoint returns service status only. It does not expose room counts or internal statistics.
+- Support one application instance only. Multiple replicas would require shared coordination or session affinity, which is outside the current scope.
 
-## 5. 身份、安全与 IP
+## 5. Identity, security, and IP addresses
 
-设备身份：
+Device identity:
 
 ```text
 deviceId = SHA-256(stable P-256 public key)
 ```
 
-要求：
+Requirements:
 
-- Host 和 Guest 都必须签署服务端随机 challenge。
-- DataChannel 上线后发送 `peer_hello`，其设备 ID 和公钥必须与信令阶段完全一致。
-- 6 位码只提供短时可输入口令，不单独作为长期认证凭据。
-- 分享链接的高熵凭证位于 URL Fragment；页面读取后立即从地址栏清除。
-- 恢复令牌不放在 WebSocket URL，而在连接建立后的首个消息中发送。
-- WSS 校验 `Origin` 与请求 Host。
-- 日志不记录连接码、令牌、SDP、ICE、消息或文件。
-- CSP 默认禁止第三方脚本和嵌入，只允许可选的 Cloudflare Turnstile 脚本与 frame。
-- REST 写请求校验 Origin，并按来源 IP 和设备身份分别限流。
-- WSS 按来源 IP 限制建连频率和并发数，每条连接限制信令消息速率。
-- 创建码超过软阈值时要求 Turnstile；服务端校验 token、action 和 hostname。
-- REST/WSS 消息采用严格新协议，旧字段直接拒绝。
+- Both host and guest sign a random challenge from the server.
+- After DataChannel opens, each side sends `peer_hello`. Its device ID and public key must match the signaling identity exactly.
+- A 6-digit code is only a short-lived secret a user can type. It is not a long-term authentication credential.
+- The high-entropy share credential is stored in the URL fragment. The page removes it from the address bar immediately after reading it.
+- A recovery token is sent in the first message after the WebSocket opens, not in the WebSocket URL.
+- WSS validates the `Origin` against the request Host.
+- Logs contain no connection codes, tokens, SDP, ICE, messages, or files.
+- The default CSP blocks third-party scripts and embedding. It permits only the optional Cloudflare Turnstile script and frame.
+- REST write requests validate Origin and have separate limits for source IP and device identity.
+- WSS has per-IP connection and concurrency limits, plus a signaling message limit for each connection.
+- Code creation requires Turnstile after a soft threshold. The server validates the token, action, and hostname.
+- REST and WSS accept the strict current protocol only. Old fields are rejected.
 
-短时连接码仍绑定信令服务看到的来源 IP：
+A temporary connection code is bound to the source IP seen by the signaling service:
 
-- Host 创建码和打开 WSS 的来源 IP 必须一致。
-- Guest 被接受后，本次临时 WSS 也绑定其来源 IP。
-- IP 变化使当前短时房间失效。
-- 已配对设备下次进入对话时使用恢复凭证创建新房间，无需输入验证码。
+- The source IP used to create a host code must match the IP used to open its WSS connection.
+- After a guest is accepted, its temporary WSS is also bound to its source IP.
+- An IP change invalidates the current temporary room.
+- On the next visit, paired devices use recovery credentials to create a new room without another code.
 
-浏览器内部收集 WebRTC ICE 候选供打洞和连接路径判断，但首页不再展示具体地址：
+The browser collects WebRTC ICE candidates for NAT traversal and route detection, but the home page does not show specific addresses:
 
-- 收集 `host`、`srflx`、`prflx` 及 related address。
-- 有效公网、局域网、CGNAT、ULA、链路本地 IPv4/IPv6 和 mDNS 候选继续参与 ICE。
-- 通过选中 Candidate Pair 判断当前实际链路类型。
-- 不向 Peerto 服务端请求“我的 IP”，也不把这些地址写入恢复登记。
-- 首页仅显示检测中、可连接、受限、缓存、不可用或无网络等轻状态；刷新入口紧跟状态文案。
-- 连接成功后优先从 `RTCIceTransport` 读取选中 Candidate Pair，并用 WebRTC Stats 兼容不同移动浏览器。
-- 双方只在已认证 DataChannel 内交换路径类型和 UDP/TCP 摘要，不交换候选 IP；通过对称归一保证会话页连接类型一致。
+- Collect `host`, `srflx`, `prflx`, and related addresses.
+- Valid public, LAN, CGNAT, ULA, link-local IPv4/IPv6, and mDNS candidates continue to participate in ICE.
+- Determine the active route from the selected candidate pair.
+- Do not ask the Peerto server for "my IP" or write these addresses into recovery registration.
+- The home page shows only a light state such as detecting, available, restricted, cached, unavailable, or offline. The refresh action sits next to this text.
+- After connection, read the selected candidate pair from `RTCIceTransport` first and use WebRTC Stats for compatibility with mobile browsers.
+- The two devices exchange only a route type and UDP/TCP summary over the authenticated DataChannel. They do not exchange candidate IP addresses. Symmetric normalization keeps the connection label the same on both sides.
 
-## 6. WebRTC、STUN 与 TURN
+## 6. WebRTC, STUN, and TURN
 
-默认公共 STUN：
+Default public STUN servers:
 
 ```text
 stun:stun.chat.bilibili.com:3478
@@ -166,114 +166,114 @@ stun:stun.cloudflare.com:3478
 stun:stun.l.google.com:19302
 ```
 
-- STUN 发现 `srflx` 候选，不负责转发业务数据。
-- 局域网 `host`、IPv4 和 IPv6 候选由浏览器 ICE 并行检查。
-- 设置页可覆盖多条 STUN。
-- TURN 支持多条标准 URL，所有 URL 共用一组用户名和 credential，并组装为一个标准 `RTCIceServer`；可替换为任意 coturn 或兼容服务。
-- STUN 与 TURN 不冲突：ICE 通常优先选择成本较低的直连 Candidate Pair，直连不可用时再使用 relay。
-- 中继连接由主机通过现有控制 DataChannel 发起 ICE restart，按 15 秒、1 分钟、5 分钟、15 分钟、30 分钟的退避间隔尝试切换到直连，之后每 30 分钟重试。文件传输期间延后自动重试。
-- 设置页提供“仅使用中继”。启用后使用标准 `iceTransportPolicy: "relay"`，不收集直连候选，也不执行中继升级直连策略。
-- 没有 TURN 时，部分对称 NAT、运营商网络、防火墙或同出口 NAT 环境可能无法直连，这是允许的失败结果。
-- NATMAP 的端口映射思路不能由普通浏览器 Web 应用直接仿制；浏览器可用的标准方案仍是 ICE/STUN/TURN。
-- 每个已配对设备可以保存一个自定义 IPv4 或可路由 IPv6；不接受缺少浏览器可用 zone ID 的 `fe80::/10` 链路本地 IPv6。启用后，该设备会话使用空 `iceServers`，不访问 STUN/TURN，只接收 host Candidate，并在本机把对端 host Candidate 地址替换为指定 IP。
-- 自定义 IP 不绕过 WebRTC 信令，也不固定浏览器随机分配的 UDP 端口。它要求两台设备之间存在真实可路由路径，且防火墙允许 WebRTC UDP；不具备路由关系的 NAT 仍不能仅靠自定义 IP 穿透。
+- STUN discovers `srflx` candidates. It does not relay application traffic.
+- Browser ICE checks LAN `host`, IPv4, and IPv6 candidates in parallel.
+- The Settings page can replace the STUN list.
+- TURN accepts multiple standard URLs. They share one username and credential and are combined into one standard `RTCIceServer`. Any coturn or compatible service can replace the current TURN service.
+- STUN and TURN do not conflict. ICE normally prefers a lower-cost direct candidate pair and uses relay when direct connection fails.
+- For a relayed connection, the host initiates ICE restarts over the existing control DataChannel. Attempts follow a 15-second, 1-minute, 5-minute, 15-minute, and 30-minute backoff, then repeat every 30 minutes. Automatic attempts wait while a file is transferring.
+- Settings includes "Relay only". When enabled, Peerto uses the standard `iceTransportPolicy: "relay"`, gathers no direct candidates, and disables relay-to-direct upgrade attempts.
+- Without TURN, some symmetric NAT, carrier network, firewall, and same-egress NAT combinations may fail. That is an accepted result.
+- A regular browser application cannot reproduce NATMAP port mapping. The standard browser options remain ICE, STUN, and TURN.
+- Each paired device can store one custom IPv4 address or routable IPv6 address. A `fe80::/10` link-local IPv6 address without a browser-usable zone ID is rejected. In custom IP mode, that device session uses empty `iceServers`, does not contact STUN or TURN, accepts host candidates only, and rewrites the remote host candidate to the configured address in the browser.
+- A custom IP does not bypass WebRTC signaling or pin the browser's randomly assigned UDP port. It requires a real route between the devices and a firewall that permits WebRTC UDP. It cannot traverse unrelated NATs by itself.
 
-## 7. 状态模型
+## 7. State model
 
-| 状态 | 判断依据 |
+| State | Condition |
 |---|---|
-| 离线 | 当前没有打开的 `control` DataChannel |
-| 无网络 | 浏览器报告网络不可用 |
-| 信令中 | 正在创建或连接临时 WSS |
-| 等待对端 | 恢复房间已登记，等待另一设备进入对话 |
-| 验证身份 | 正在执行设备私钥 challenge |
-| 连接中 | 正在交换 SDP/ICE |
-| 在线 | `control` DataChannel 打开且 P2P 心跳正常 |
-| 重连中 | 当前对话正在执行短暂恢复或退避登记 |
-| 直连失败 | 自动 ICE 尝试耗尽时提示可能需要 TURN；自定义 IP 模式提示检查地址、路由和防火墙 |
+| Offline | No open `control` DataChannel |
+| No network | The browser reports no network |
+| Signaling | Creating or connecting a temporary WSS |
+| Waiting for peer | Recovery room registered, waiting for the other device to open the conversation |
+| Verifying identity | Running the device private key challenge |
+| Connecting | Exchanging SDP and ICE |
+| Online | `control` DataChannel open and P2P heartbeat healthy |
+| Reconnecting | The open conversation is running short recovery or backoff registration |
+| Direct connection failed | Automatic ICE attempts are exhausted; suggest TURN, or check the address, route, and firewall in custom IP mode |
 
-P2P 每 10 秒发送一次心跳，30 秒未收到 `pong` 判定异常。服务端不维护长期在线状态。
+P2P sends a heartbeat every 10 seconds and considers the connection unhealthy after 30 seconds without a `pong`. The server does not maintain long-term presence.
 
-## 8. 消息和文件
+## 8. Messages and files
 
-`control` DataChannel：
+The `control` DataChannel carries:
 
 - `peer_hello`
-- 文本、回复引用和置顶同步
-- 消息 ACK
-- 单条消息删除请求与结果
-- 会话删除请求与结果
-- 文件 offer/accept/reject/end/complete
-- 文件接收窗口 ACK
-- 心跳
+- Text, reply references, and pin updates
+- Message acknowledgements
+- Single-message deletion requests and results
+- Conversation deletion requests and results
+- File offer, accept, reject, end, and complete messages
+- File receiver window acknowledgements
+- Heartbeats
 
-`file` DataChannel：
+The `file` DataChannel:
 
-- 仅传二进制文件分块。
-- 每帧包含固定 magic、`transferId`、单调序号和负载。
-- 默认负载 16 KiB，且不超过浏览器协商的 SCTP 消息上限。
-- 接收方验证 transfer ID、序号和总大小。
-- 接收方每写入约 128 KiB 或写完时 ACK。
-- 发送方最多超前约 512 KiB，避免手机内存和 DataChannel 缓冲无限增长。
-- 收到 offer 后自动在本机预下载，不要求接收方手动确认。
-- 接收方完成 OPFS 落盘或生成降级下载后发送 `file_complete`，发送端才标记 delivered。
-- 同时只允许一个发送和一个接收任务，不支持断点续传或后台传输。
+- Carries binary file chunks only.
+- Gives every frame a fixed magic value, `transferId`, monotonic sequence, and payload.
+- Uses a 16 KiB payload by default and never exceeds the browser's negotiated SCTP message size.
+- Has the receiver validate the transfer ID, sequence, and total size.
+- Has the receiver acknowledge after writing about 128 KiB or after the final write.
+- Allows the sender to run about 512 KiB ahead at most, which bounds mobile memory and DataChannel buffering.
+- Starts a local download automatically after an offer. The receiver does not approve each file manually.
+- Marks the sender as delivered only after the receiver writes the file to OPFS or creates a fallback download and sends `file_complete`.
+- Allows one outgoing and one incoming transfer at a time. It does not support resume or background transfer.
 
-接收端统一流式写入 OPFS 本机资源缓存，避免 Android `createWritable()` 失败，也不需要先弹出保存位置。图片和视频保持原始字节，不压缩、不转码，完成后以本地 Object URL 在会话中显示；文档以文件卡片显示。资源页以宫格列出本机内容，支持预览、下载、单独删除和全部清空。删除资源只移除本机内容，消息和文件元数据仍保留。只有 OPFS 不可用时才在内存中组装 Blob 并触发浏览器下载。不设置额外 100 MiB 限制，但仍遵守默认 2 GiB 全局上限。
+The receiver streams files into the local OPFS resource cache. This avoids Android `createWritable()` failures and removes the need to choose a save location first. Images and video retain their original bytes, with no compression or transcoding, and appear in the conversation through a local Object URL after completion. Documents appear as file cards. The Resources page shows local content in a grid and supports preview, download, single deletion, and clearing all resources. Deleting a resource removes local content but keeps the message and file metadata. Only when OPFS is unavailable does Peerto assemble a Blob in memory and trigger a browser download. There is no separate 100 MiB limit, but the default global 2 GiB limit still applies.
 
-删除整个会话遵循远端优先的两阶段顺序：
+Deleting a complete conversation uses a remote-first, two-stage order:
 
-- 仅在该设备的 `control` DataChannel 在线时显示“同时删除对方数据”选项。
-- 未勾选时只删除本机消息、资源和配对记录。
-- 勾选后，本机先发送带唯一请求 ID 的会话删除请求，在等待期间禁止关闭弹窗或重复提交。
-- 对方收到请求后停止该会话的进行中传输，严格清理消息、OPFS 资源、文件句柄和配对记录，再返回成功或失败结果。
-- 本机只在收到远端成功结果后停止传输并执行本地清理；远端清理失败、连接中断或 60 秒内未确认时，本机数据保持不变并提示失败。
-- 删除完成后双方都不保留该会话历史。已删除一侧会忽略该连接上后续到达的业务消息，避免删除期间的并发消息重新写入历史。
+- "Also delete data on the other device" is available only while that device's `control` DataChannel is online.
+- Without the option, Peerto deletes local messages, resources, and pairing records only.
+- With the option, the local device sends a conversation deletion request with a unique ID. The dialog cannot close or submit again while it waits.
+- The peer stops transfers for that conversation, strictly removes messages, OPFS resources, file handles, and pairing records, then returns success or failure.
+- The local device stops transfers and deletes its data only after the peer reports success. If remote cleanup fails, the connection closes, or no confirmation arrives within 60 seconds, local data stays unchanged and the UI reports failure.
+- After success, neither side keeps conversation history. A side that has deleted the conversation ignores later business messages on that connection so concurrent messages cannot recreate history during deletion.
 
-## 9. PWA、移动端与国际化
+## 9. PWA, mobile, and internationalization
 
-- PWA Manifest 使用 `standalone`。
-- 移动浏览器使用 `viewport-fit=cover` 和动态键盘视口；iOS 安装模式使用透明状态栏，并适配顶部、底部和横屏安全区。
-- Service Worker 预缓存应用壳和带哈希静态资源，并清理旧缓存。
-- HTML、Service Worker、Manifest 和注册脚本禁止长期缓存；哈希资源缓存一年且 immutable。
-- 离线时可打开应用并使用“我的”，不能创建码或建立 P2P。
-- 手机采用单栏会话、触摸尺寸和安全区适配。
-- 首页不显示 ICE 地址，Peerto 下方显示轻量连接环境状态，并在文案后保留手动重新收集候选的刷新按钮。
-- 默认设备名由稳定设备身份短码生成；用户自定义名称优先且不会被自动覆盖。
-- 中文、英文、主题和 ICE 设置保存在本地。
-- 设置页采用左右分类布局，包含常规、外观、连接和资源分类；连接分类提供活动设备连接上限、多条 STUN、多条 TURN URL、由所有 TURN URL 共用的一组用户名和密码，以及仅使用中继开关。
+- The PWA manifest uses `standalone`.
+- Mobile browsers use `viewport-fit=cover` and the dynamic keyboard viewport. Installed iOS mode uses a transparent status bar and accounts for top, bottom, and landscape safe areas.
+- The service worker precaches the application shell and hashed static files, then removes old caches.
+- HTML, the service worker, the manifest, and the registration script must not be cached for a long time. Hashed assets use an immutable one-year cache.
+- Offline users can open the app and use "Mine", but cannot create a code or establish P2P.
+- Mobile uses a single-column conversation view, touch-sized controls, and safe-area spacing.
+- The home page does not show ICE addresses. A light connection-environment state appears under Peerto, with manual candidate collection next to the text.
+- The default device name comes from a stable short device identity. A custom name takes precedence and is not overwritten automatically.
+- Language, theme, and ICE settings are stored locally.
+- Settings uses a two-column category layout with General, Appearance, Connection, and Resources. Connection includes the active device limit, multiple STUN URLs, multiple TURN URLs, one shared TURN username and password, and Relay only.
 
-## 10. 部署与验收
+## 10. Deployment and acceptance
 
-Compose 只包含一个 `app` 服务，不内置 Caddy、Redis 或 coturn。公网 TLS 由现有入口提供；独立 TURN 不与应用部署耦合。
+Compose contains one `app` service. It does not include Caddy, Redis, or coturn. An existing ingress provides public TLS, and TURN remains independent of the application deployment.
 
-必须通过：
+Required checks:
 
-- TypeScript 全工作区类型检查。
-- 服务端、前端和共享协议单元测试。
-- 生产构建。
-- Compose 配置校验。
-- 健康检查。
-- 首次普通码、分享链接、双向信令、双方上线后 WSS 关闭。
-- 服务端状态清空后的双方自动恢复。
-- 旧协议字段被拒绝。
-- 文件 v2 帧编解码、序号、窗口 ACK 和完成确认。
+- TypeScript type checking for every workspace.
+- Unit tests for the server, web app, and shared protocol.
+- Production build.
+- Compose configuration validation.
+- Health check.
+- First connection with a regular code, share link, bidirectional signaling, and WSS closure after both sides are online.
+- Automatic recovery by both sides after server state is cleared.
+- Rejection of old protocol fields.
+- File v2 frame encoding, sequence, window acknowledgement, and completion acknowledgement.
 
-通用生产目标：
+General production target:
 
-- 安装路径和公网域名由运营者决定，不写入仓库。
-- 使用反向代理时，宿主机端口只监听回环地址或受保护的内部网络。
-- 公网入口提供 HTTPS 和 WebSocket Upgrade。
-- 只有受控反向代理可以启用 `TRUST_PROXY=true`，限流和短时房间绑定使用代理传递的客户端来源 IP。
-- coturn 独立部署，不由 Peerto Compose 启动或修改。
+- The operator chooses the installation path and public hostname. Neither belongs in the repository.
+- Behind a reverse proxy, the published host port binds only to loopback or a protected internal network.
+- The public ingress provides HTTPS and WebSocket Upgrade.
+- Use `TRUST_PROXY=true` only with a controlled reverse proxy. Rate limits and temporary room binding use the client source IP forwarded by that proxy.
+- coturn runs independently and is not started or modified by the Peerto Compose file.
 
-## 11. 工程组织
+## 11. Project organization
 
-- 使用 npm workspaces 分离 `apps/web`、`apps/server` 和 `packages/protocol`。
-- 前端按业务 feature 拆分对话、连接、消息、资源、重试、会话适配、设置和文件传输；页面入口只做状态与视图组合。
-- WebRTC/WSS 会话状态机放在 `services/peer`，React 组件不直接维护底层 PeerConnection。
-- 中英文内容分别位于 `locales/zh.ts` 与 `locales/en.ts`，不嵌入页面组件。
-- 服务端组合根、配置、插件、REST 路由、静态资源、设备安全、WebSocket 信令和 TTL 内存仓库分别独立。
-- 前后端共享 Schema、消息和文件帧类型只能定义在 `packages/protocol`。
-- 单元测试与实现就近；服务端应用测试负责黑盒协议、安全和生命周期覆盖。
-- 详细目录边界见 [ARCHITECTURE.md](./ARCHITECTURE.md)。
+- npm workspaces separate `apps/web`, `apps/server`, and `packages/protocol`.
+- Frontend features separate conversations, connection, messages, resources, retry, session adapters, settings, and file transfer. The page entry only composes state and views.
+- The WebRTC/WSS state machine belongs in `services/peer`. React components do not maintain the low-level `PeerConnection`.
+- Chinese and English strings live in `locales/zh.ts` and `locales/en.ts`, not in page components.
+- Server composition, configuration, plugins, REST routes, static files, device security, WebSocket signaling, and the TTL memory store are separate modules.
+- Shared schemas, messages, and file frame types can be defined only in `packages/protocol`.
+- Unit tests stay next to their implementation. Server application tests cover protocol, security, and lifecycle behavior as a black box.
+- See [ARCHITECTURE.md](./ARCHITECTURE.md) for detailed directory boundaries.

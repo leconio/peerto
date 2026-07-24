@@ -1,83 +1,84 @@
 # Peerto
 
-[English](./README.en.md)
+[中文](./README.zh-CN.md)
 
-[在线演示](https://peerto.aside0.me)
+[Live demo](https://peerto.aside0.me)
 
-Peerto 是一个浏览器里的点对点消息和文件传输工具。界面接近常见的聊天应用，但它不是聊天室：消息和文件通过 WebRTC DataChannel 在设备之间传输，应用服务器只负责页面、短时连接码和建链信令。
+Peerto sends messages and files directly between browsers with WebRTC DataChannel. It looks like a chat app, but it is not a hosted chat service. The application server serves the web app, issues short-lived connection codes, and relays signaling only while two devices connect.
 
-## 能做什么
+## Features
 
-- 使用 6 位短时连接码配对两台设备
-- 使用分享链接直接连接，无需再次确认
-- 配对后保存设备身份，进入会话时自动恢复连接
-- 一个浏览器同时保持多个设备连接，默认上限为 4
-- 发送文本、原图、视频和其他文件
-- 回复、置顶和删除自己发送的消息
-- 文件分块传输并写入浏览器本地存储
-- 在资源页预览、下载或删除本机文件
-- 配置多个 STUN、多个 TURN、仅中继模式或单个设备的自定义 IP
-- 安装为 PWA，支持手机布局、中英文和深浅色主题
+- Pair two devices with a short-lived 6-digit code
+- Connect from a share link without another approval step
+- Restore a verified device connection when its conversation is opened
+- Keep several peer connections active in one browser, with a default limit of 4
+- Send text, original images, video, and other files
+- Reply to, pin, and delete messages you sent
+- Stream files in chunks into browser-local storage
+- Preview, download, and remove local resources
+- Configure multiple STUN URLs, multiple TURN URLs, relay-only mode, or a custom peer IP
+- Install as a PWA on desktop or mobile
+- Use the interface in English or Chinese
 
-每个会话仍是 1 对 1。Peerto 没有账号系统、群聊、云端历史、离线消息和设备在线目录。
+Each conversation is still one-to-one. Peerto has no accounts, groups, cloud history, offline delivery, or server-side presence directory.
 
-## 数据放在哪里
+## Where data is stored
 
-消息记录和配对信息保存在当前浏览器。设备私钥与文件句柄使用 IndexedDB，接收的文件使用 OPFS。应用服务器不保存消息正文和文件内容。
+Messages and pairing records stay in the current browser. IndexedDB stores the device key and file handles. Received file data is written to OPFS. The application server does not store message bodies or file contents.
 
-服务器在建链期间会处理连接码、设备公钥、来源 IP、SDP 和 ICE Candidate。这些状态有容量上限和短 TTL，P2P 建立后会被删除。详细说明见 [隐私说明](./docs/privacy.md)。
+During connection setup, the server handles a code, device public keys, source IP addresses, SDP, and ICE candidates. This state is bounded and expires quickly. It is deleted once the peer connection is ready. See [Privacy](./docs/privacy.md) for the full boundary.
 
-## 快速启动
+## Run with Docker
 
-需要 Docker 和 Docker Compose：
+Docker and Docker Compose are required:
 
 ```bash
 cp .env.example .env
 docker compose up -d --build
 ```
 
-打开 `http://localhost:3000`。公网部署必须提供 HTTPS 和 WSS，可以使用现有的反向代理或 Cloudflare Tunnel，不要求安装 Caddy。
+Open `http://localhost:3000`. A public deployment needs HTTPS and WSS. Use any reverse proxy or Cloudflare Tunnel you already operate. Caddy is not required.
 
-默认只内置公共 STUN，不内置任何 TURN 地址或凭据。TURN 可以在设置页填写，也可以按 [TURN 部署说明](./docs/turn.md) 自建。连接走 TURN 时，默认会按退避策略重新协商并尝试切换到直连；需要固定走 TURN 时可开启“仅使用中继”。
+The default build contains public STUN URLs only. It contains no TURN endpoint or credential. Users can add a TURN server in Settings, or operators can follow the [coturn guide](./docs/turn.md). When a connection uses TURN, Peerto periodically renegotiates it and tries to upgrade to a direct path. Enable Relay only to keep a connection on TURN.
 
-## 本地开发
+## Development
 
-需要 Node.js 22 或更高版本：
+Node.js 22 or newer is required:
 
 ```bash
 npm install
 npm run dev
 ```
 
-提交改动前运行：
+Run the full local check before submitting a change:
 
 ```bash
 npm run check
 ```
 
-项目使用 npm workspaces：
+The repository uses npm workspaces:
 
 ```text
 apps/web/          React PWA
-apps/server/       Fastify 静态资源、API 和临时 WebSocket 信令
-packages/protocol/ 前后端共享的 Schema 与协议类型
-deploy/            部署示例
-docs/              运维与安全文档
+apps/server/       Fastify static files, API, and temporary signaling
+packages/protocol/ Shared schemas and protocol types
+deploy/            Deployment examples
+docs/              Operations and security notes
 ```
 
-## 部署文档
+## Documentation
 
-- [Docker 与生产部署](./docs/deployment.md)
-- [部署和使用 coturn](./docs/turn.md)
-- [Cloudflare Tunnel、限流与 Turnstile](./docs/cloudflare.md)
-- [常见连接问题](./docs/troubleshooting.md)
-- [工程结构](./ARCHITECTURE.md)
-- [需求与协议边界](./REQUIREMENTS.md)
+- [Docker and production deployment](./docs/deployment.md)
+- [Deploying and using coturn](./docs/turn.md)
+- [Cloudflare Tunnel, rate limits, and Turnstile](./docs/cloudflare.md)
+- [Connection troubleshooting](./docs/troubleshooting.md)
+- [Project structure](./ARCHITECTURE.md)
+- [Requirements and protocol boundaries](./REQUIREMENTS.md)
 
-## 参与项目
+## Contributing
 
-问题和改动建议请先看 [CONTRIBUTING.md](./CONTRIBUTING.md)。安全问题不要提交公开 Issue，请按 [SECURITY.md](./SECURITY.md) 中的方式报告。
+Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening a pull request. Report vulnerabilities using [SECURITY.md](./SECURITY.md), not a public issue.
 
-## 许可证
+## License
 
 [MIT](./LICENSE)

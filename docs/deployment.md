@@ -1,19 +1,19 @@
-# 生产部署
+# Production deployment
 
-[English](./deployment.en.md)
+[中文](./deployment.zh-CN.md)
 
-Peerto 只有一个应用容器。它同时提供静态页面、两个 REST 接口和临时 WebSocket 信令，不需要 Redis 或数据库。
+Peerto uses one application container. It serves the static page, two REST endpoints, and temporary WebSocket signaling. It needs no Redis or database.
 
-## 前提
+## Requirements
 
-- Docker Engine 24 或更高版本
+- Docker Engine 24 or newer
 - Docker Compose v2
-- 一个支持 HTTPS 和 WebSocket 的公网入口
-- 单实例部署
+- A public ingress with HTTPS and WebSocket support
+- A single application instance
 
-WebRTC、Service Worker、文件系统 API 等浏览器能力在公网环境需要安全上下文，因此正式站点必须使用 HTTPS。
+WebRTC, service workers, and browser file-system APIs require a secure context on a public site, so production must use HTTPS.
 
-## 启动
+## Start
 
 ```bash
 git clone <repository-url>
@@ -22,7 +22,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-默认监听 `0.0.0.0:3000`。如果 TLS 入口和 Peerto 在同一台机器，建议只监听回环地址：
+The default bind is `0.0.0.0:3000`. If the TLS ingress runs on the same machine, bind Peerto to loopback:
 
 ```dotenv
 PEERTO_BIND_ADDRESS=127.0.0.1
@@ -30,64 +30,64 @@ PEERTO_PORT=3100
 TRUST_PROXY=true
 ```
 
-应用健康检查：
+Check application health:
 
 ```bash
 curl --fail http://127.0.0.1:3100/api/health
 ```
 
-成功时只返回：
+A healthy application returns only:
 
 ```json
 {"status":"ok"}
 ```
 
-## 环境变量
+## Environment variables
 
-| 变量 | 默认值 | 说明 |
+| Variable | Default | Description |
 |---|---:|---|
-| `PEERTO_BIND_ADDRESS` | `0.0.0.0` | Compose 发布端口绑定的宿主机地址 |
-| `PEERTO_PORT` | `3000` | Compose 在宿主机发布的端口；容器内部固定监听 3000 |
-| `ROOM_TTL_SECONDS` | `300` | 连接房间和恢复登记的 TTL |
-| `MAX_PENDING_ROOMS` | `2000` | 内存中的待连接房间上限 |
-| `MAX_CODE_RECORDS` | `5000` | 恢复凭证命名空间上限 |
-| `MAX_CODE_MEMBERS` | `64` | 单个恢复凭证可登记的设备数 |
-| `MAX_RATE_BUCKETS` | `50000` | 内存限流桶上限 |
-| `RATE_LIMIT_CREATE_PER_MINUTE` | `12` | 单 IP 每分钟创建码上限 |
-| `RATE_LIMIT_CREATE_PER_DEVICE_PER_MINUTE` | `6` | 单设备每分钟创建码上限 |
-| `RATE_LIMIT_RECONNECT_PER_MINUTE` | `60` | 单 IP 每分钟恢复请求上限 |
-| `RATE_LIMIT_RECONNECT_PER_DEVICE_PER_MINUTE` | `30` | 单设备每分钟恢复请求上限 |
-| `RATE_LIMIT_WS_PER_MINUTE` | `60` | 单 IP 每分钟 WebSocket 建连上限 |
-| `MAX_WS_CONNECTIONS_PER_IP` | `12` | 单 IP 同时存在的临时 WebSocket 上限 |
-| `MAX_WS_MESSAGES_PER_MINUTE` | `240` | 单 WebSocket 每分钟信令消息上限 |
-| `STUN_URLS` | 见 `.env.example` | 逗号分隔的公共 STUN 列表 |
-| `MAX_FILE_BYTES` | `2147483648` | 前端允许的单文件大小 |
-| `TRUST_PROXY` | `false` | 是否信任入口代理传递的客户端 IP |
+| `PEERTO_BIND_ADDRESS` | `0.0.0.0` | Host address used by the Compose port binding |
+| `PEERTO_PORT` | `3000` | Host port published by Compose; the container listens on 3000 |
+| `ROOM_TTL_SECONDS` | `300` | TTL for connection rooms and recovery registration |
+| `MAX_PENDING_ROOMS` | `2000` | Maximum pending rooms in memory |
+| `MAX_CODE_RECORDS` | `5000` | Maximum recovery credential namespaces |
+| `MAX_CODE_MEMBERS` | `64` | Devices registered under one recovery credential |
+| `MAX_RATE_BUCKETS` | `50000` | Maximum in-memory rate-limit buckets |
+| `RATE_LIMIT_CREATE_PER_MINUTE` | `12` | Code creations per IP per minute |
+| `RATE_LIMIT_CREATE_PER_DEVICE_PER_MINUTE` | `6` | Code creations per device per minute |
+| `RATE_LIMIT_RECONNECT_PER_MINUTE` | `60` | Recovery requests per IP per minute |
+| `RATE_LIMIT_RECONNECT_PER_DEVICE_PER_MINUTE` | `30` | Recovery requests per device per minute |
+| `RATE_LIMIT_WS_PER_MINUTE` | `60` | WebSocket connections per IP per minute |
+| `MAX_WS_CONNECTIONS_PER_IP` | `12` | Concurrent temporary WebSockets per IP |
+| `MAX_WS_MESSAGES_PER_MINUTE` | `240` | Signaling messages per WebSocket per minute |
+| `STUN_URLS` | See `.env.example` | Comma-separated public STUN list |
+| `MAX_FILE_BYTES` | `2147483648` | Maximum file size allowed by the frontend |
+| `TRUST_PROXY` | `false` | Trust the client IP forwarded by the ingress |
 
-`TRUST_PROXY=true` 只能用于受控反向代理。不要让应用端口同时绕过代理对公网开放，否则请求方可以伪造转发头，影响限流与短时 IP 绑定。
+Use `TRUST_PROXY=true` only behind a controlled proxy. Do not expose the application port directly at the same time. A direct client could forge forwarded headers and interfere with rate limits and temporary IP binding.
 
-官方 Compose 只向用户暴露 `PEERTO_PORT`。容器内部的 Node 进程使用标准 `PORT=3000`，该值由 Compose 固定，不需要写进 `.env`。
+The official Compose file exposes only `PEERTO_PORT` to users. The Node process inside the container uses the standard `PORT=3000`, which Compose fixes internally and does not belong in `.env`.
 
-Turnstile 的变量见 [Cloudflare 防护](./cloudflare.md)。三个核心变量都留空时，Turnstile 完全关闭。
+See [Cloudflare protection](./cloudflare.md) for Turnstile variables. Turnstile is completely disabled when all three core variables are empty.
 
-## 入口代理
+## Ingress proxy
 
-入口需要原样转发：
+The ingress must forward:
 
-- `/` 和静态资源
+- `/` and static assets
 - `/api/config`
 - `/api/health`
 - `POST /api/rooms`
 - `POST /api/rooms/reconnect`
-- `/ws` 的 WebSocket Upgrade
+- WebSocket Upgrade on `/ws`
 
-代理层不要缓存 REST 写请求和 WebSocket。`/api/config` 可以按应用返回的缓存头处理，带哈希的前端资源可以长期缓存。
+Do not cache REST write requests or WebSocket traffic. `/api/config` can follow the application's cache headers, and hashed frontend assets can use a long cache.
 
-Cloudflare Tunnel 的示例在 [Cloudflare 防护](./cloudflare.md)。如果使用 Nginx，请确认 `/ws` 转发了 `Upgrade` 与 `Connection` 请求头。
+See [Cloudflare protection](./cloudflare.md) for a Tunnel example. With Nginx, make sure `/ws` forwards the `Upgrade` and `Connection` headers.
 
-## 更新与回滚
+## Update and rollback
 
-应用没有数据库迁移。更新前仍应保留上一份镜像：
+The application has no database migration. Keep the previous image before an update:
 
 ```bash
 docker image tag peerto:local peerto:rollback
@@ -96,9 +96,9 @@ docker compose build
 docker compose up -d
 ```
 
-检查失败时可以把 Compose 中的镜像临时改为 `peerto:rollback` 后重新启动。浏览器端协议不承诺兼容旧版本，生产更新时应避免新旧应用实例同时对外服务。
+If checks fail, temporarily change the Compose image to `peerto:rollback` and start it again. Browser protocols do not promise compatibility with old versions, so avoid serving old and new application instances at the same time.
 
-## 上线前检查
+## Preflight checks
 
 ```bash
 npm ci
@@ -109,11 +109,11 @@ curl --fail http://127.0.0.1:3000/api/health
 BASE_URL=http://127.0.0.1:3000 npm run acceptance
 ```
 
-还需要确认：
+Also confirm:
 
-- 应用端口没有直接暴露到公网
-- HTTPS 证书有效，WebSocket 能升级
-- 日志没有连接码、凭据、SDP 或 ICE 内容
-- `.env`、TURN 配置、证书和私钥均未提交到 Git
-- Cloudflare 或入口代理有独立的请求限速
-- 只有一个 Peerto 应用实例在处理会合状态
+- The application port is not publicly reachable
+- The HTTPS certificate is valid and WebSocket Upgrade works
+- Logs contain no code, credential, SDP, or ICE content
+- `.env`, TURN configuration, certificates, and private keys are not committed
+- Cloudflare or the ingress has an independent request rate limit
+- Only one Peerto application instance handles rendezvous state

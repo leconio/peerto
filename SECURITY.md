@@ -1,35 +1,35 @@
-# 安全策略
+# Security policy
 
-[English](./SECURITY.en.md)
+[中文](./SECURITY.zh-CN.md)
 
-## 支持范围
+## Supported versions
 
-Peerto 目前只维护主分支的最新版本。仓库不承诺旧 PWA、旧信令字段和旧文件协议的安全更新。
+Peerto supports only the latest version of the main branch. The project does not provide security updates for old PWA builds, signaling fields, or file protocols.
 
-## 报告漏洞
+## Reporting a vulnerability
 
-请使用 GitHub 仓库的 Security Advisory 中的 “Report a vulnerability” 私下报告。不要提交公开 Issue，也不要在演示站点上做会影响其他用户的测试。
+Use "Report a vulnerability" in the GitHub repository's Security Advisory section. Do not open a public Issue or run tests on the demo site that could affect other users.
 
-报告中请包含：
+Include:
 
-- 受影响的提交或版本
-- 复现条件和最小步骤
-- 实际影响
-- 你已经做过的验证
-- 建议的修复方向，可选
+- The affected commit or version
+- Conditions and minimal reproduction steps
+- The actual impact
+- Checks you have already performed
+- A suggested fix, if you have one
 
-不要发送真实用户数据、私人 TURN 凭据、Cloudflare token 或服务器登录信息。需要提供敏感样本时，请先在 Security Advisory 中协商传输方式。
+Do not send real user data, private TURN credentials, Cloudflare tokens, or server login details. If a sensitive sample is necessary, agree on a transfer method in the Security Advisory first.
 
-维护者会先确认收到报告，再评估影响和修复计划。公开时间应在修复发布后共同确定。
+Maintainers will acknowledge the report, assess its impact, and plan a fix. The publication date should be agreed after a fixed version is available.
 
-## 范围说明
+## Scope
 
-以下情况本身不视为 Peerto 漏洞：
+The following behaviors are not Peerto vulnerabilities by themselves:
 
-- 没有 TURN 时，某些 NAT 或防火墙环境无法直连
-- 使用公共 STUN 会向该服务暴露请求来源 IP
-- 浏览器必须知道它正在使用的 TURN 地址和凭据
-- 清除浏览器站点数据会丢失本地身份、历史和配对
-- 同一设备上能够读取浏览器配置的恶意扩展读取了站点存储
+- Some NAT and firewall combinations cannot connect directly without TURN
+- A public STUN server can see the source IP address of a request
+- A browser must know the TURN endpoint and credentials it uses
+- Clearing browser site data removes local identity, history, and pairings
+- A malicious extension with access to browser configuration can read site storage on the same device
 
-如果这些行为可以绕过现有身份验证、读取其他会话数据、导致服务端无界资源占用或泄露未公开凭据，仍请私下报告。
+Report the issue privately if one of these behaviors bypasses authentication, reads another session's data, causes unbounded server resource use, or exposes credentials that were not public.

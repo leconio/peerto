@@ -1,105 +1,105 @@
-# 连接问题排查
+# Connection troubleshooting
 
-[English](./troubleshooting.en.md)
+[中文](./troubleshooting.zh-CN.md)
 
-## 一直显示无法建立直连
+## Direct connection keeps failing
 
-常见原因有：
+Common causes:
 
-- 双方都在对称 NAT 后
-- 运营商使用 CGNAT
-- 公司或校园网络限制 UDP
-- 两台设备在同一出口 NAT 后，但路由器不支持 hairpin
-- 防火墙丢弃 WebRTC 使用的随机 UDP 端口
-- 公共 STUN 在当前网络不可达
+- Both devices are behind symmetric NAT
+- A carrier uses CGNAT
+- A company or campus network restricts UDP
+- Both devices share one egress NAT and the router lacks hairpin support
+- A firewall drops the random UDP ports used by WebRTC
+- Public STUN is unreachable from the current network
 
-先在设置中保留 UDP 和 TCP 两种 TURN URL，再重新进入会话。如果顶部显示“中继连接”，说明直连失败后已经使用 TURN。
+Keep both UDP and TCP TURN URLs in Settings, then reopen the conversation. If the header says "Relayed connection", direct connection failed and ICE selected TURN.
 
-STUN 只帮助发现地址，不转发数据。增加更多 STUN 不能解决所有 NAT 问题。
+STUN only discovers addresses. It does not relay data, so adding more STUN services cannot solve every NAT problem.
 
-## 两台设备在同一局域网仍然连不上
+## Devices on the same LAN cannot connect
 
-浏览器通常会收集 host Candidate，但 mDNS、访客 Wi-Fi 隔离、AP Client Isolation 和主机防火墙都可能阻止互访。
+Browsers normally gather host candidates, but mDNS, guest Wi-Fi isolation, AP Client Isolation, and host firewalls can prevent local traffic.
 
-可以逐项检查：
+Check:
 
-1. 两台设备是否能在局域网直接访问彼此。
-2. Wi-Fi 是否开启了客户端隔离。
-3. VPN 是否改写默认路由。
-4. 浏览器是否允许 WebRTC。
-5. 防火墙是否允许浏览器的 UDP 流量。
+1. Whether each device can reach the other over the LAN.
+2. Whether Wi-Fi client isolation is enabled.
+3. Whether a VPN changes the default route.
+4. Whether the browser permits WebRTC.
+5. Whether the firewall permits browser UDP traffic.
 
-已配对设备可以设置自定义 IP。这个功能仍需要两台设备之间真实可路由，也仍需要 Peerto WebSocket 完成 SDP 交换。它不会固定浏览器随机选择的 UDP 端口。
+A paired device can use a custom IP. The two devices still need a real route, and Peerto WebSocket signaling is still required for SDP exchange. A custom IP does not pin the random UDP port selected by the browser.
 
-## 连接码生成成功，但另一台设备找不到主机
+## A code exists but the other device cannot find the host
 
-连接码绑定主机访问 Peerto 服务时的来源 IP。主机从 Wi-Fi 切换到移动网络、VPN 上下线或出口 IP 变化后，旧房间会失效。关闭旧弹窗并重新生成连接码。
+A connection code is bound to the source IP used when the host reaches Peerto. If the host moves from Wi-Fi to mobile data, toggles a VPN, or changes egress IP, the old room expires. Close the old dialog and create a new code.
 
-检查两台设备的系统时间、HTTPS 证书和 WebSocket。反向代理必须正确处理 `/ws` Upgrade。
+Check both system clocks, the HTTPS certificate, and WebSocket connectivity. The reverse proxy must handle the `/ws` Upgrade correctly.
 
-## 刷新后无法恢复
+## Recovery fails after a refresh
 
-恢复需要双方仍保存：
+Recovery needs both browsers to retain:
 
-- 同一配对码命名空间
-- 相同的高熵恢复令牌
-- 自己的 P-256 私钥
-- 对方的设备身份
+- The same pairing code namespace
+- The same high-entropy recovery token
+- Their own P-256 private key
+- The peer device identity
 
-双方都打开对应会话时，第一个设备登记等待，第二个设备加入。如果清过站点数据、使用隐私模式或浏览器回收了存储，需要重新配对。
+When both devices open the conversation, the first registers and waits while the second joins. If site data was cleared, private browsing was used, or the browser evicted storage, pair the devices again.
 
-## 手机接收文件失败
+## Mobile file receiving fails
 
-Peerto 优先把接收数据流式写入 OPFS，不要求 Android 先创建目标文件。检查：
+Peerto streams received data into OPFS first, so Android does not need to create a destination file before transfer. Check:
 
-- 浏览器可用磁盘空间
-- 站点存储权限和配额
-- 页面是否在传输中被系统挂起
-- 两端是否保持在前台
-- 文件是否超过 `MAX_FILE_BYTES`
+- Free browser storage
+- Site storage permission and quota
+- Whether the operating system suspended the page
+- Whether both pages stayed in the foreground
+- Whether the file exceeds `MAX_FILE_BYTES`
 
-浏览器不支持 OPFS 时会退回内存和普通下载。大文件在该模式下更容易被系统终止。
+If OPFS is unavailable, Peerto falls back to memory and a regular download. The operating system is more likely to terminate a large transfer in this mode.
 
-当前协议不支持断点续传。传输中刷新、断网或关闭页面后，需要重新发送文件。
+The current protocol does not support resume. A refresh, network loss, or page close during transfer requires sending the file again.
 
-## TURN 配置后没有看到 relay
+## TURN is configured but no relay appears
 
-只要直连可用，ICE 选择直连是正常的。确认 TURN 是否参与可以查看：
+ICE choosing a direct path is normal when direct connection works. To confirm TURN participation, inspect:
 
-- Chrome 的 `chrome://webrtc-internals`
-- Firefox 的 `about:webrtc`
-- coturn 容器日志
+- `chrome://webrtc-internals` in Chrome
+- `about:webrtc` in Firefox
+- coturn container logs
 
-如果没有 relay Candidate，检查 TURN 域名、端口、传输类型、用户名、密码、防火墙和 `external-ip`。TURN 主机在 NAT 后时，relay 端口范围必须一对一映射。
+If no relay candidate exists, check the TURN hostname, port, transport, username, password, firewall, and `external-ip`. When the TURN host is behind NAT, the complete relay port range needs a one-to-one mapping.
 
-## 页面出现人机验证失败
+## Human verification fails
 
-Turnstile token 有效时间短且只能使用一次。刷新页面后重试。如果持续失败，站点运营者应检查：
+A Turnstile token expires quickly and can be used once. Refresh the page and try again. If failure continues, the site operator should check:
 
-- Widget 是否允许当前 hostname
-- 服务端的 site key 和 secret 是否属于同一个 Widget
-- `TURNSTILE_ALLOWED_HOSTNAMES` 是否包含当前域名
-- CSP 是否允许 `https://challenges.cloudflare.com`
-- 服务端是否能访问 Siteverify
+- Whether the Widget allows the current hostname
+- Whether the server site key and secret belong to the same Widget
+- Whether `TURNSTILE_ALLOWED_HOSTNAMES` contains the current hostname
+- Whether CSP permits `https://challenges.cloudflare.com`
+- Whether the server can reach Siteverify
 
-不要把 Turnstile secret 发到 Issue。
+Never paste the Turnstile secret into an Issue.
 
-## 收集诊断信息
+## Collecting diagnostic information
 
-提交 Issue 时可以附上：
+An Issue may include:
 
-- 浏览器名称与版本
-- 操作系统
-- 两端网络类型，例如家庭 Wi-Fi、移动网络或公司网络
-- 页面显示的连接阶段和错误码
-- 是否配置 TURN
-- 能否在其他网络重现
+- Browser name and version
+- Operating system
+- Network types at both ends, such as home Wi-Fi, mobile data, or company network
+- The connection stage and error code shown by the page
+- Whether TURN is configured
+- Whether another network reproduces the problem
 
-不要附上：
+Do not include:
 
-- 连接码或分享链接
-- 恢复令牌
-- TURN 密码
-- Turnstile secret
-- 完整 SDP、ICE Candidate 或真实 IP
-- 浏览器站点存储导出
+- Connection codes or share links
+- Recovery tokens
+- TURN passwords
+- Turnstile secrets
+- Full SDP, ICE candidates, or real IP addresses
+- Exported browser site storage

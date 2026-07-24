@@ -1,67 +1,67 @@
-# 隐私说明
+# Privacy
 
-[English](./privacy.en.md)
+[中文](./privacy.zh-CN.md)
 
-本文说明自建 Peerto 时，数据分别由浏览器、Peerto 应用和网络辅助服务处理。
+This page describes how a self-hosted Peerto deployment handles data in the browser, the Peerto application, and network helper services.
 
-## 浏览器本地
+## Browser-local data
 
-当前浏览器会保存：
+The current browser stores:
 
-- 设备名称和稳定设备 ID
-- P-256 设备私钥
-- 已配对设备的公钥和恢复凭据
-- 本地消息记录、文件名和传输状态
-- 用户选择的 STUN、TURN 和自定义 IP 设置
-- 文件句柄与 OPFS 中的资源内容
+- Device name and stable device ID
+- P-256 device private key
+- Public keys and recovery credentials for paired devices
+- Local messages, filenames, and transfer state
+- User-selected STUN, TURN, and custom IP settings
+- File handles and resource content in OPFS
 
-这些数据不会自动同步到其他浏览器。清除站点数据会删除身份、配对和本地历史，之后需要重新配对。
+This data does not synchronize to another browser automatically. Clearing site data removes the identity, pairings, and local history, so the devices must pair again.
 
-如果填写 TURN 用户名和密码，它们只保存在当前浏览器。任何能读取该浏览器站点数据的人或扩展都可能取得这些信息，因此公共设备上不应保存私人 TURN 凭据。
+TURN usernames and passwords are stored only in the current browser. A person or extension that can read that browser's site data may obtain them. Do not store private TURN credentials on a public device.
 
-## Peerto 应用服务器
+## Peerto application server
 
-应用服务器在建链期间会处理：
+During connection setup, the application server handles:
 
-- 来源 IP
-- 6 位连接码
-- 设备名称、设备 ID 和公钥
-- 短时随机凭据的哈希
-- SDP 与 ICE Candidate
-- WebSocket 状态
+- Source IP addresses
+- 6-digit connection codes
+- Device names, IDs, and public keys
+- Hashes of short-lived random credentials
+- SDP and ICE candidates
+- WebSocket state
 
-这些信息用于身份验证、限流和 WebRTC 建链。房间有短 TTL，双方 P2P 上线后会立即释放。应用进程重启也会清空全部会合状态。
+This information is used for authentication, rate limits, and WebRTC setup. Rooms have a short TTL and are released as soon as both devices are online over P2P. Restarting the application process also clears all rendezvous state.
 
-应用服务器不会接收或保存：
+The application server does not receive or store:
 
-- 消息正文
-- 文件内容
-- P-256 私钥
-- 浏览器本地历史
-- 用户在设置页填写的 TURN 配置
+- Message bodies
+- File contents
+- P-256 private keys
+- Browser-local history
+- TURN settings entered by a user
 
-日志配置会隐藏请求 URL，不记录连接码、令牌、SDP、ICE、消息和文件。运维人员仍应限制日志访问，并检查入口代理是否额外记录了完整查询参数。
+Logging hides request URLs and does not record codes, tokens, SDP, ICE, messages, or files. Operators should still restrict log access and check whether the ingress records complete query parameters.
 
 ## STUN
 
-浏览器会向设置中的 STUN 服务发送 Binding 请求，用来发现公网映射地址。STUN 服务会看到请求来源 IP。默认列表包含第三方公共服务，运营者不能替这些服务承诺保留周期或隐私政策。
+The browser sends Binding requests to configured STUN services to discover public mapped addresses. A STUN service sees the source IP of each request. The default list contains third-party public services, and the Peerto operator cannot promise their retention or privacy policy.
 
-不希望访问公共 STUN 时，可以在设置页替换为自己的服务。
+Replace the default list in Settings if you do not want to contact public STUN services.
 
 ## TURN
 
-只有 ICE 需要 relay 时，业务流量才经过 TURN。TURN 运营者可以看到两端 IP、连接时间和流量大小，但 WebRTC DataChannel 的 DTLS 加密仍保护消息与文件内容。
+Application traffic passes through TURN only when ICE needs a relay. A TURN operator can see both endpoint IP addresses, connection time, and traffic volume. DTLS encryption on WebRTC DataChannel still protects message and file content.
 
-TURN 地址和凭据不会由 Peerto 应用服务器下发。它们由用户在当前浏览器设置。
+The Peerto application server does not supply TURN endpoints or credentials. A user configures them in the current browser.
 
 ## Cloudflare
 
-使用 Cloudflare Tunnel、代理、WAF 或 Turnstile 时，Cloudflare 会处理到 Peerto Web 和 API 的请求，并可见来源 IP、请求路径和浏览器信息。具体处理方式受站点运营者的 Cloudflare 配置与政策约束。
+When a deployment uses Cloudflare Tunnel, proxying, WAF, or Turnstile, Cloudflare handles requests to the Peerto web app and API. It can see source IP addresses, request paths, and browser information. Processing depends on the site operator's Cloudflare settings and policies.
 
-Turnstile token 只用于创建连接码的人机验证。Peerto 服务端验证后不会保存 token。
+A Turnstile token is used only to verify code creation. The Peerto server does not keep the token after verification.
 
-## 删除
+## Deletion
 
-资源页可以单独删除或清空本机文件。删除会话会移除当前浏览器中的消息、资源和配对记录。对方在线时，可以选择要求对方先删除同一会话；对方确认成功后，本机才继续删除。
+The Resources page can remove one local file or clear all local files. Deleting a conversation removes messages, resources, and pairing records from the current browser. If the peer is online, the user may ask it to delete the same conversation first. Local deletion begins only after the peer confirms success.
 
-服务器端短时状态不能作为聊天记录恢复来源。它会自动过期，也没有提供导出接口。
+Temporary server state cannot restore chat history. It expires automatically and has no export endpoint.

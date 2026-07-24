@@ -1,17 +1,17 @@
-# 社区行为准则
+# Community code of conduct
 
-[English](./CODE_OF_CONDUCT.en.md)
+[中文](./CODE_OF_CONDUCT.zh-CN.md)
 
-Peerto 的讨论应围绕问题本身，保持具体、克制和可验证。
+Peerto discussions should stay focused on the issue and use specific, restrained, verifiable language.
 
-参与者需要：
+Participants must:
 
-- 尊重不同经验、背景和表达方式
-- 对代码和方案提出意见，不针对个人
-- 不公开他人的身份、地址、凭据或私人通信
-- 发现安全信息时转到私下报告渠道
-- 接受维护者为保护项目和参与者所做的内容管理
+- Respect different levels of experience, backgrounds, and ways of communicating
+- Critique code and proposals rather than people
+- Never publish another person's identity, address, credentials, or private messages
+- Move security information to the private reporting channel
+- Accept moderation used to protect the project and its participants
 
-骚扰、歧视、威胁、持续的人身攻击、冒充他人和发布私人信息不会被接受。维护者可以编辑或移除不合适的内容，限制参与权限，必要时永久禁止参与。
+Harassment, discrimination, threats, repeated personal attacks, impersonation, and publishing private information are not accepted. Maintainers may edit or remove inappropriate content, restrict participation, or permanently ban a participant when necessary.
 
-遇到行为问题，请通过仓库维护者的 GitHub 私信或 Security Advisory 联系。报告会在可行范围内保密处理。
+Report conduct problems through a repository maintainer's GitHub messages or a Security Advisory. Reports will be kept private when practical.

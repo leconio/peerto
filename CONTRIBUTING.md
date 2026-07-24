@@ -1,51 +1,51 @@
-# 参与 Peerto
+# Contributing to Peerto
 
-[English](./CONTRIBUTING.en.md)
+[中文](./CONTRIBUTING.zh-CN.md)
 
-感谢你愿意花时间改进 Peerto。提交代码前，请先确认改动仍然符合项目边界：消息和文件不经过应用服务器，没有账号系统，没有数据库，也不引入常驻在线目录。
+Thank you for spending time on Peerto. Before changing code, check that the proposal still fits the project boundary: messages and files do not pass through the application server, and the project has no accounts, database, or permanent presence directory.
 
-## 报告问题
+## Reporting a problem
 
-普通 Bug 可以提交 Issue。请写清楚浏览器、系统、两端网络类型、复现步骤和页面错误码。
+Use an Issue for an ordinary bug. Include the browser, operating system, network type at both ends, reproduction steps, and the error code shown by the page.
 
-不要粘贴连接码、分享链接、恢复令牌、TURN 密码、Turnstile secret、真实 IP、完整 SDP 或 ICE Candidate。安全问题请按 [SECURITY.md](./SECURITY.md) 私下报告。
+Do not paste connection codes, share links, recovery tokens, TURN passwords, Turnstile secrets, real IP addresses, full SDP, or ICE candidates. Report security issues privately as described in [SECURITY.md](./SECURITY.md).
 
-## 开发环境
+## Development environment
 
-需要 Node.js 22 或更高版本：
+Node.js 22 or newer is required:
 
 ```bash
 npm install
 npm run dev
 ```
 
-前端默认运行在 5173，API 和 WebSocket 代理到 3000。
+The frontend runs on port 5173 by default and proxies API and WebSocket traffic to port 3000.
 
-## 提交改动
+## Submitting changes
 
-1. 为 Bug 修复或协议变更补测试。
-2. 前后端共享字段先改 `packages/protocol`。
-3. 用户可见文案同时更新中文和英文。
-4. 不提交 `.env`、TURN 配置、证书、私钥和抓包内容。
-5. 不保留旧协议兼容分支，除非维护者明确决定改变当前策略。
-6. 更新与改动直接相关的文档，并同步中文 `.md` 与英文 `.en.md`。
+1. Add tests for bug fixes and protocol changes.
+2. Change `packages/protocol` first when a field is shared by the client and server.
+3. Update Chinese and English user-facing copy together.
+4. Do not commit `.env`, TURN configuration, certificates, private keys, or packet captures.
+5. Do not keep old protocol compatibility branches unless the maintainers explicitly change the current policy.
+6. Update related documentation in both the default English `.md` file and the Chinese `.zh-CN.md` file.
 
-提交前运行：
+Run these commands before submitting:
 
 ```bash
 npm run check
 docker compose config --quiet
 ```
 
-涉及 WebRTC 的改动还应至少用两个独立浏览器测试首次连接、恢复连接和断开处理。涉及文件传输时，测试空文件、小文件、大文件取消和移动端接收。
+WebRTC changes should be tested in at least two independent browsers. Cover the first connection, recovery, and disconnect behavior. File transfer changes should cover an empty file, a small file, cancellation of a large file, and mobile receiving.
 
-## Pull Request
+## Pull requests
 
-PR 描述应包含：
+A pull request should explain:
 
-- 改了什么
-- 为什么需要改
-- 如何验证
-- 是否改变本地存储、共享协议、隐私边界或部署配置
+- What changed
+- Why it changed
+- How it was verified
+- Whether it changes local storage, the shared protocol, the privacy boundary, or deployment configuration
 
-请把一个 PR 控制在一个主题内。大规模重构最好先开 Issue 说明目录和协议影响。
+Keep each pull request focused on one topic. For a large refactor, open an Issue first and describe the directory and protocol impact.
