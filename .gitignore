@@ -1,0 +1,16 @@
+node_modules
+dist
+.DS_Store
+.env
+.env.*
+!.env.example
+coverage
+playwright-report
+test-results
+*.log
+deploy/coturn/turnserver.conf
+deploy/coturn/.env
+deploy/coturn/certs/
+*.pem
+*.key
+secret-scan-report.*

@@ -1,0 +1,30 @@
+name: peerto-turn
+
+services:
+  coturn:
+    image: coturn/coturn:4.14.0-r0
+    container_name: peerto-coturn
+    network_mode: host
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 1
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+      - /var/lib/coturn:size=16m,mode=0700,uid=65534,gid=65534
+    volumes:
+      - ./turnserver.conf:/etc/coturn/turnserver.conf:ro
+    command:
+      - -c
+      - /etc/coturn/turnserver.conf

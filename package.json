@@ -1,0 +1,53 @@
+{
+  "name": "peerto",
+  "version": "0.1.0",
+  "description": "Browser-to-browser messages and file transfers over WebRTC",
+  "license": "MIT",
+  "author": "Peerto contributors",
+  "homepage": "https://github.com/leconio/peerto#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/leconio/peerto.git"
+  },
+  "bugs": {
+    "url": "https://github.com/leconio/peerto/issues"
+  },
+  "keywords": [
+    "webrtc",
+    "peer-to-peer",
+    "file-transfer",
+    "pwa"
+  ],
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @peerto/protocol && npm run build -w @peerto/web && npm run build -w @peerto/server",
+    "dev": "concurrently -n web,server -c cyan,green \"npm run dev -w @peerto/web\" \"npm run dev -w @peerto/server\"",
+    "acceptance": "node scripts/acceptance.mjs",
+    "check": "npm run check:secrets && npm run check:docs && npm run typecheck && npm test && npm run build",
+    "check:docs": "node scripts/check-docs.mjs",
+    "check:secrets": "node scripts/check-secrets.mjs",
+    "check:stun": "node scripts/check-stun.mjs",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "concurrently": "^9.2.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.0"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "overrides": {
+    "esbuild": "^0.28.1",
+    "tsup": {
+      "esbuild": "^0.28.1"
+    }
+  }
+}

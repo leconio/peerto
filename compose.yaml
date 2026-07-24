@@ -1,0 +1,40 @@
+services:
+  app:
+    build:
+      context: .
+    image: peerto:local
+    restart: unless-stopped
+    environment:
+      PORT: "3000"
+      ROOM_TTL_SECONDS: ${ROOM_TTL_SECONDS:-300}
+      MAX_CODE_MEMBERS: ${MAX_CODE_MEMBERS:-64}
+      MAX_PENDING_ROOMS: ${MAX_PENDING_ROOMS:-2000}
+      MAX_CODE_RECORDS: ${MAX_CODE_RECORDS:-5000}
+      MAX_RATE_BUCKETS: ${MAX_RATE_BUCKETS:-50000}
+      RATE_LIMIT_CREATE_PER_MINUTE: ${RATE_LIMIT_CREATE_PER_MINUTE:-12}
+      RATE_LIMIT_CREATE_PER_DEVICE_PER_MINUTE: ${RATE_LIMIT_CREATE_PER_DEVICE_PER_MINUTE:-6}
+      RATE_LIMIT_RECONNECT_PER_MINUTE: ${RATE_LIMIT_RECONNECT_PER_MINUTE:-60}
+      RATE_LIMIT_RECONNECT_PER_DEVICE_PER_MINUTE: ${RATE_LIMIT_RECONNECT_PER_DEVICE_PER_MINUTE:-30}
+      RATE_LIMIT_WS_PER_MINUTE: ${RATE_LIMIT_WS_PER_MINUTE:-60}
+      MAX_WS_CONNECTIONS_PER_IP: ${MAX_WS_CONNECTIONS_PER_IP:-12}
+      MAX_WS_MESSAGES_PER_MINUTE: ${MAX_WS_MESSAGES_PER_MINUTE:-240}
+      TRUST_PROXY: ${TRUST_PROXY:-false}
+      STUN_URLS: ${STUN_URLS:-stun:stun.chat.bilibili.com:3478,stun:stun.miwifi.com:3478,stun:stun.hitv.com:3478,stun:stun.cloudflare.com:3478,stun:stun.l.google.com:19302}
+      MAX_FILE_BYTES: ${MAX_FILE_BYTES:-2147483648}
+      TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
+      TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
+      TURNSTILE_ALLOWED_HOSTNAMES: ${TURNSTILE_ALLOWED_HOSTNAMES:-}
+      TURNSTILE_SOFT_LIMIT: ${TURNSTILE_SOFT_LIMIT:-3}
+      TURNSTILE_WINDOW_SECONDS: ${TURNSTILE_WINDOW_SECONDS:-600}
+    ports:
+      - "${PEERTO_BIND_ADDRESS:-0.0.0.0}:${PEERTO_PORT:-3000}:3000"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch("http://127.0.0.1:3000/api/health").then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
