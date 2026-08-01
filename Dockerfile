@@ -1,4 +1,4 @@
-FROM node:24-alpine AS builder
+FROM node:25-alpine AS builder
 
 WORKDIR /app
 
@@ -14,7 +14,7 @@ COPY packages ./packages
 RUN npm run build
 RUN npm prune --omit=dev
 
-FROM node:24-alpine AS runtime
+FROM node:25-alpine AS runtime
 
 ENV NODE_ENV=production
 ENV PORT=3000
