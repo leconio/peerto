@@ -1,9 +1,10 @@
 import type { DeviceIdentity } from "@peerto/protocol";
 
 export interface RoomRecord {
+  id: string;
   code: string;
   host: DeviceIdentity;
-  hostIp: string;
+
   hostTokenHash: string;
   shareTokenHash: string;
   resume: boolean;
@@ -36,19 +37,8 @@ export interface RoomStore {
     ttlSeconds: number,
     roomKey?: string,
   ): Promise<boolean>;
-  setRoom(
-    room: RoomRecord,
-    ttlSeconds: number,
-    roomKey?: string,
-  ): Promise<void>;
-  replaceRoom(
-    room: RoomRecord,
-    ttlSeconds: number,
-    expectedCreatedAt: number,
-    roomKey?: string,
-  ): Promise<boolean>;
   getRoom(code: string, roomKey?: string): Promise<RoomRecord | null>;
-  deleteRoom(code: string, roomKey?: string): Promise<void>;
+  deleteRoom(code: string, roomKey?: string, expectedId?: string): Promise<void>;
   createCode(record: CodeRecord, ttlSeconds: number): Promise<boolean>;
   getCode(code: string, tokenHash: string): Promise<CodeRecord | null>;
   upsertCodeMember(
@@ -120,39 +110,6 @@ export class InMemoryRoomStore implements RoomStore {
     return true;
   }
 
-  async setRoom(
-    room: RoomRecord,
-    ttlSeconds: number,
-    roomKey = room.code,
-  ): Promise<void> {
-    this.deleteExpiredRoom(roomKey);
-    if (
-      !this.rooms.has(roomKey) &&
-      this.rooms.size >= this.options.maxRooms
-    ) {
-      this.cleanupExpired();
-      if (this.rooms.size >= this.options.maxRooms) {
-        throw new Error("ROOM_STORE_CAPACITY");
-      }
-    }
-    this.rooms.set(roomKey, {
-      value: room,
-      expiresAt: this.now() + ttlSeconds * 1_000,
-    });
-  }
-
-  async replaceRoom(
-    room: RoomRecord,
-    ttlSeconds: number,
-    expectedCreatedAt: number,
-    roomKey = room.code,
-  ): Promise<boolean> {
-    const current = await this.getRoom(room.code, roomKey);
-    if (!current || current.createdAt !== expectedCreatedAt) return false;
-    await this.setRoom(room, ttlSeconds, roomKey);
-    return true;
-  }
-
   async getRoom(
     code: string,
     roomKey = code,
@@ -161,7 +118,8 @@ export class InMemoryRoomStore implements RoomStore {
     return this.rooms.get(roomKey)?.value || null;
   }
 
-  async deleteRoom(code: string, roomKey = code): Promise<void> {
+  async deleteRoom(code: string, roomKey = code, expectedId?: string): Promise<void> {
+    if (expectedId !== undefined && this.rooms.get(roomKey)?.value.id !== expectedId) return;
     this.rooms.delete(roomKey);
   }
 

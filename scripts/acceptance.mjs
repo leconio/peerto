@@ -208,31 +208,12 @@ await guest.next("room_consumed");
 host.close();
 guest.close();
 
-const reconnectHostResponse = await fetch(
-  `${baseUrl}/api/rooms/reconnect`,
-  {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      code: room.code,
-      device: hostDevice.identity,
-      peerDeviceId: guestDevice.identity.deviceId,
-      connectionToken: room.connectionToken,
-    }),
-  },
-);
-if (!reconnectHostResponse.ok) {
-  throw new Error(`自动恢复登记失败: ${await reconnectHostResponse.text()}`);
-}
-const reconnectHostRoom = await reconnectHostResponse.json();
-if (reconnectHostRoom.role !== "host") {
-  throw new Error("首个自动恢复设备未成为 Host");
-}
 const recoveryHost = new MessageSocket(
   `${wsBase}/ws?role=host&code=${room.code}`,
 );
 await recoveryHost.open({
   type: "session_init",
+  recoveryDevice: hostDevice.identity,
   token: room.connectionToken,
   connectionToken: room.connectionToken,
   deviceId: hostDevice.identity.deviceId,
@@ -240,31 +221,12 @@ await recoveryHost.open({
 });
 await authenticateHost(recoveryHost, hostDevice, room.code);
 
-const reconnectGuestResponse = await fetch(
-  `${baseUrl}/api/rooms/reconnect`,
-  {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      code: room.code,
-      device: guestDevice.identity,
-      peerDeviceId: hostDevice.identity.deviceId,
-      connectionToken: room.connectionToken,
-    }),
-  },
-);
-if (!reconnectGuestResponse.ok) {
-  throw new Error(`自动恢复加入失败: ${await reconnectGuestResponse.text()}`);
-}
-const reconnectGuestRoom = await reconnectGuestResponse.json();
-if (reconnectGuestRoom.role !== "guest") {
-  throw new Error("第二个自动恢复设备未成为 Guest");
-}
 const recoveryGuest = new MessageSocket(
   `${wsBase}/ws?role=guest&code=${room.code}`,
 );
 await recoveryGuest.open({
   type: "session_init",
+  recoveryDevice: guestDevice.identity,
   connectionToken: room.connectionToken,
   deviceId: guestDevice.identity.deviceId,
   peerDeviceId: hostDevice.identity.deviceId,
@@ -287,14 +249,23 @@ recoveryGuest.send({
   signature: recoverySignature,
   connectionToken: room.connectionToken,
 });
-await recoveryHost.next("peer_accepted");
-await recoveryGuest.next("peer_accepted");
-recoveryHost.send({ type: "connected" });
-recoveryGuest.send({ type: "connected" });
+const recoveredHost = await recoveryHost.next("peer_accepted");
+const recoveredGuest = await recoveryGuest.next("peer_accepted");
+if (!recoveredHost.sessionId || recoveredHost.sessionId !== recoveredGuest.sessionId ||
+    recoveredHost.rendezvous.role !== "host" || recoveredGuest.rendezvous.role !== "guest") {
+  throw new Error("恢复协商标识或自动协调角色无效");
+}
+recoveryHost.send({ type: "connected", sessionId: recoveredHost.sessionId });
+recoveryGuest.send({ type: "connected", sessionId: recoveredGuest.sessionId });
 await recoveryHost.next("room_consumed");
 await recoveryGuest.next("room_consumed");
-recoveryHost.close();
-recoveryGuest.close();
+const stableClosed = Promise.all([recoveryHost, recoveryGuest].map(peer => new Promise((resolve, reject) => {
+  const timer = setTimeout(() => reject(new Error("Stable signaling was not released")), 5_000);
+  peer.socket.once("close", () => { clearTimeout(timer); resolve(); });
+})));
+recoveryHost.send({ type: "signaling_stable", sessionId: recoveredHost.sessionId });
+recoveryGuest.send({ type: "signaling_stable", sessionId: recoveredGuest.sessionId });
+await stableClosed;
 
 const reused = new MessageSocket(
   `${wsBase}/ws?role=guest&code=${room.code}`,
@@ -367,7 +338,9 @@ console.log(
       hostApproval: "ok",
       bidirectionalSignaling: "ok",
       temporarySignalingClosed: "ok",
-      automaticReconnect: "ok",
+      authenticatedReconnect: "ok",
+      wsOnlyReconnect: "ok",
+      earlySignalingRelease: "ok",
       singleUseCode: "ok",
       shareLinkAutoConnect: "ok",
     },

@@ -7,7 +7,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: "autoUpdate",
-      injectRegister: "auto",
+      injectRegister: false,
       includeAssets: [
         "peerto-icon.svg",
         "peerto-180.png",
@@ -51,9 +51,14 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/api": "http://127.0.0.1:3000",
+      "/api": {
+        target: "http://127.0.0.1:3000",
+        // Preserve browser Host/Origin for the server's same-origin check.
+        changeOrigin: false,
+      },
       "/ws": {
         target: "ws://127.0.0.1:3000",
+        changeOrigin: false,
         ws: true,
       },
     },

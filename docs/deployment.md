@@ -2,7 +2,7 @@
 
 [中文](./deployment.zh-CN.md)
 
-Peerto uses one application container. It serves the static page, two REST endpoints, and temporary WebSocket signaling. It needs no Redis or database.
+Peerto uses one application container. It serves static assets, HTTP APIs, and temporary WebSocket signaling. It needs no Redis or database.
 
 ## Requirements
 
@@ -59,6 +59,7 @@ A healthy application returns only:
 | `RATE_LIMIT_RECONNECT_PER_DEVICE_PER_MINUTE` | `30` | Recovery requests per device per minute |
 | `RATE_LIMIT_WS_PER_MINUTE` | `60` | WebSocket connections per IP per minute |
 | `MAX_WS_CONNECTIONS_PER_IP` | `12` | Concurrent temporary WebSockets per IP |
+| `MAX_WS_CONNECTIONS` | `4000` | Global temporary WebSocket limit, including unauthenticated connections |
 | `MAX_WS_MESSAGES_PER_MINUTE` | `240` | Signaling messages per WebSocket per minute |
 | `STUN_URLS` | See `.env.example` | Comma-separated public STUN list |
 | `MAX_FILE_BYTES` | `2147483648` | Maximum file size allowed by the frontend |
@@ -82,6 +83,8 @@ The ingress must forward:
 - WebSocket Upgrade on `/ws`
 
 Do not cache REST write requests or WebSocket traffic. `/api/config` can follow the application's cache headers, and hashed frontend assets can use a long cache.
+
+Recovery now registers through WebSocket; the REST recovery route remains for older clients. Compose probes health every 30 seconds using Alpine's lightweight `wget`, and health requests suppress routine access logs. Keep the existing immutable-asset and PWA caches; no CDN migration is required.
 
 See [Cloudflare protection](./cloudflare.md) for a Tunnel example. With Nginx, make sure `/ws` forwards the `Upgrade` and `Connection` headers.
 

@@ -28,6 +28,7 @@
     "build": "npm run build -w @peerto/protocol && npm run build -w @peerto/web && npm run build -w @peerto/server",
     "dev": "concurrently -n web,server -c cyan,green \"npm run dev -w @peerto/web\" \"npm run dev -w @peerto/server\"",
     "acceptance": "node scripts/acceptance.mjs",
+    "test:browser": "node --import tsx scripts/browser-connection-regression.mjs",
     "check": "npm run check:secrets && npm run check:docs && npm run typecheck && npm test && npm run build",
     "check:docs": "node scripts/check-docs.mjs",
     "check:secrets": "node scripts/check-secrets.mjs",

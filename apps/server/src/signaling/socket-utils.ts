@@ -1,4 +1,6 @@
 import {
+  clientWsMessageSchema,
+  type ClientWsMessage,
   wsSessionInitSchema,
   type ServerWsMessage,
   type WsSessionInit,
@@ -6,6 +8,35 @@ import {
 import { WebSocket, type RawData } from "ws";
 
 const SESSION_INIT_TIMEOUT_MS = 10_000;
+
+/** One bounded, ordered message queue per socket, including async storage. */
+export function listenMessages(
+  socket: WebSocket,
+  acceptMessage: (socket: WebSocket) => boolean,
+  handle: (message: ClientWsMessage) => Promise<void>,
+): void {
+  let queue = Promise.resolve();
+  socket.on("message", raw => {
+    if (socket.readyState !== WebSocket.OPEN || !acceptMessage(socket)) return;
+    queue = queue.then(async () => {
+      if (socket.readyState !== WebSocket.OPEN) return;
+      let json: unknown;
+      try { json = JSON.parse(raw.toString()); }
+      catch {
+        closeWithMessage(socket, { type: "error", code: "INVALID_JSON", message: "无效信令" });
+        return;
+      }
+      const parsed = clientWsMessageSchema.safeParse(json);
+      if (!parsed.success) {
+        closeWithMessage(socket, { type: "error", code: "INVALID_MESSAGE", message: "无效信令" });
+        return;
+      }
+      await handle(parsed.data);
+    }).catch(() => closeWithMessage(socket, {
+      type: "error", code: "SIGNALING_UNAVAILABLE", message: "信令暂时不可用",
+    }));
+  });
+}
 
 export function send(
   socket: WebSocket,

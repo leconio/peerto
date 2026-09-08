@@ -6,7 +6,7 @@ import type {
 import { useEffect } from "react";
 import type { PeerClient } from "../../services/peer";
 import type { ConnectionDialogKind } from "./ConnectionDialogs";
-import type { PendingSharedJoin } from "./share-link";
+import { consumeSharedJoin, type PendingSharedJoin } from "./share-link";
 
 export interface SharedJoinBindings {
   client: PeerClient | undefined;
@@ -31,6 +31,7 @@ export function useSharedJoin({
     if (!pending) return;
     handledRef.current = true;
     pendingRef.current = undefined;
+    consumeSharedJoin(pending);
     setJoinCode(pending.code);
     setConnectionDialog("auto");
     client.join(pending.code, pending.token);

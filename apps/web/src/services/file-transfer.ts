@@ -1,4 +1,5 @@
 export const SAFE_FILE_CHUNK_BYTES = 16 * 1024;
+export const MAX_QUEUED_FILES = 32;
 const FILE_CHUNK_FRAME_MAGIC = 0x50545232;
 export const FILE_CHUNK_FRAME_HEADER_BYTES = 24;
 const TEMPORARY_FILE_PREFIX = "peerto-receive-";

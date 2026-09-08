@@ -2,7 +2,7 @@
 
 [English](./deployment.md)
 
-Peerto 只有一个应用容器。它同时提供静态页面、两个 REST 接口和临时 WebSocket 信令，不需要 Redis 或数据库。
+Peerto 只有一个应用容器。它同时提供静态资源、HTTP API 和临时 WebSocket 信令，不需要 Redis 或数据库。
 
 ## 前提
 
@@ -59,6 +59,7 @@ curl --fail http://127.0.0.1:3100/api/health
 | `RATE_LIMIT_RECONNECT_PER_DEVICE_PER_MINUTE` | `30` | 单设备每分钟恢复请求上限 |
 | `RATE_LIMIT_WS_PER_MINUTE` | `60` | 单 IP 每分钟 WebSocket 建连上限 |
 | `MAX_WS_CONNECTIONS_PER_IP` | `12` | 单 IP 同时存在的临时 WebSocket 上限 |
+| `MAX_WS_CONNECTIONS` | `4000` | 全局临时 WebSocket 上限，包含尚未认证的连接 |
 | `MAX_WS_MESSAGES_PER_MINUTE` | `240` | 单 WebSocket 每分钟信令消息上限 |
 | `STUN_URLS` | 见 `.env.example` | 逗号分隔的公共 STUN 列表 |
 | `MAX_FILE_BYTES` | `2147483648` | 前端允许的单文件大小 |
@@ -82,6 +83,8 @@ Turnstile 的变量见 [Cloudflare 防护](./cloudflare.zh-CN.md)。三个核心
 - `/ws` 的 WebSocket Upgrade
 
 代理层不要缓存 REST 写请求和 WebSocket。`/api/config` 可以按应用返回的缓存头处理，带哈希的前端资源可以长期缓存。
+
+恢复登记已合入 WebSocket，REST 恢复入口仅为旧客户端保留。Compose 每 30 秒使用 Alpine 自带的轻量 `wget` 检查健康，健康请求不再记录常规访问日志。保留已有静态资源强缓存和 PWA 缓存，无需迁移 CDN。
 
 Cloudflare Tunnel 的示例在 [Cloudflare 防护](./cloudflare.zh-CN.md)。如果使用 Nginx，请确认 `/ws` 转发了 `Upgrade` 与 `Connection` 请求头。
 

@@ -151,31 +151,24 @@ describe("removeConversation", () => {
     );
   });
 
-  it("stores and clears a custom IP only for the selected peer", async () => {
-    const { useAppStore } = await import("./store");
-    const peer = {
-      deviceId: "peer-with-custom-network-address",
-      name: "LAN phone",
-      publicKey: {
-        crv: "P-256" as const,
-        kty: "EC" as const,
-        x: "x",
-        y: "y",
+  it("removes legacy custom IP values while restoring peers", async () => {
+    const { withoutLegacyCustomIps } = await import("./store");
+    const restored = withoutLegacyCustomIps([
+      {
+        deviceId: "peer-with-custom-network-address",
+        name: "LAN phone",
+        publicKey: {
+          crv: "P-256",
+          kty: "EC",
+          x: "x",
+          y: "y",
+        },
+        lastConnectedAt: 1,
+        customIp: "192.168.8.20",
       },
-    };
-    useAppStore.getState().upsertPeer(peer);
-
-    useAppStore
-      .getState()
-      .setPeerCustomIp(peer.deviceId, "192.168.8.20");
-    expect(useAppStore.getState().peers[0]?.customIp).toBe(
-      "192.168.8.20",
-    );
-
-    useAppStore.getState().setPeerCustomIp(peer.deviceId);
-    expect(useAppStore.getState().peers[0]).not.toHaveProperty(
-      "customIp",
-    );
+    ]);
+    expect(restored[0]?.name).toBe("LAN phone");
+    expect(restored[0]).not.toHaveProperty("customIp");
   });
 
   it("removes only the selected message", async () => {

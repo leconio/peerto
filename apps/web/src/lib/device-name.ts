@@ -1,3 +1,5 @@
+import { loadFirstDeviceName } from "./first-use";
+
 const AUTOMATIC_NAME = "Peerto";
 
 function normalizedPlatform(platform: string): string {
@@ -12,7 +14,9 @@ function identityCode(deviceId: string, length: number): string {
 }
 
 export function initialDeviceName(): string {
-  return AUTOMATIC_NAME;
+  return typeof localStorage === "undefined"
+    ? AUTOMATIC_NAME
+    : loadFirstDeviceName(localStorage) || AUTOMATIC_NAME;
 }
 
 export function identityDeviceName(deviceId: string): string {

@@ -28,7 +28,7 @@ describe("relay upgrade policy", () => {
     ).toBe(false);
   });
 
-  it("runs only for an online host using a relay in automatic mode", () => {
+  it("runs only for an online host using a relay", () => {
     const base = {
       role: "host" as const,
       online: true,
@@ -42,12 +42,6 @@ describe("relay upgrade policy", () => {
     ).toBe(false);
     expect(
       shouldScheduleRelayUpgrade({ ...base, role: "guest" }),
-    ).toBe(false);
-    expect(
-      shouldScheduleRelayUpgrade({
-        ...base,
-        customPeerIp: "192.168.1.20",
-      }),
     ).toBe(false);
     expect(
       shouldScheduleRelayUpgrade({

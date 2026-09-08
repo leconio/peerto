@@ -1,6 +1,7 @@
 import {
   ArrowBendUpLeft,
   Check,
+  Copy,
   DotsThreeVertical,
   PushPin,
   PushPinSlash,
@@ -29,6 +30,7 @@ export interface MessageListProps {
   canStopTransfer: boolean;
   onOpenFile: (message: StoredMessage) => void;
   onStopFile: (message: StoredMessage) => void;
+  onCopyMessage: (message: StoredMessage) => void;
   onReply: (message: StoredMessage) => void;
   onTogglePin: (message: StoredMessage) => void;
   onDeleteMessage: (message: StoredMessage) => void;
@@ -44,6 +46,7 @@ export function MessageList({
   canStopTransfer,
   onOpenFile,
   onStopFile,
+  onCopyMessage,
   onReply,
   onTogglePin,
   onDeleteMessage,
@@ -129,7 +132,7 @@ export function MessageList({
     setMessageMenu({
       messageId,
       x: Math.max(8, Math.min(clientX, window.innerWidth - 196)),
-      y: Math.max(8, Math.min(clientY, window.innerHeight - 150)),
+      y: Math.max(8, Math.min(clientY, window.innerHeight - 190)),
     });
   };
 
@@ -302,6 +305,19 @@ export function MessageList({
             <ArrowBendUpLeft size={18} />
             {t("message.reply")}
           </button>
+          {menuMessage.kind === "text" && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                onCopyMessage(menuMessage);
+                setMessageMenu(undefined);
+              }}
+            >
+              <Copy size={18} />
+              {t("message.copy")}
+            </button>
+          )}
           <button
             type="button"
             role="menuitem"

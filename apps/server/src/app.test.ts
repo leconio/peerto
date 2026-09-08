@@ -11,15 +11,17 @@ import {
 } from "@peerto/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
-import { challengePayload } from "./security/device-auth";
+import { challengePayload, hashToken } from "./security/device-auth";
+import { reconnectRoomKey } from "./signaling/room-key";
 import type { TurnstileVerifier } from "./security/turnstile";
 import { buildApp } from "./app";
 import type { AppConfig } from "./config/app-config";
-import type {
-  CodeMember,
-  CodeRecord,
-  RoomRecord,
-  RoomStore,
+import {
+  InMemoryRoomStore,
+  type CodeMember,
+  type CodeRecord,
+  type RoomRecord,
+  type RoomStore,
 } from "./storage/room-store";
 
 class MemoryRoomStore implements RoomStore {
@@ -37,26 +39,6 @@ class MemoryRoomStore implements RoomStore {
     return true;
   }
 
-  async setRoom(
-    room: RoomRecord,
-    _ttlSeconds?: number,
-    roomKey = room.code,
-  ): Promise<void> {
-    this.rooms.set(roomKey, room);
-  }
-
-  async replaceRoom(
-    room: RoomRecord,
-    _ttlSeconds: number,
-    expectedCreatedAt: number,
-    roomKey = room.code,
-  ): Promise<boolean> {
-    const current = this.rooms.get(roomKey);
-    if (!current || current.createdAt !== expectedCreatedAt) return false;
-    this.rooms.set(roomKey, room);
-    return true;
-  }
-
   async getRoom(
     code: string,
     roomKey = code,
@@ -64,7 +46,8 @@ class MemoryRoomStore implements RoomStore {
     return this.rooms.get(roomKey) || null;
   }
 
-  async deleteRoom(code: string, roomKey = code): Promise<void> {
+  async deleteRoom(code: string, roomKey = code, expectedId?: string): Promise<void> {
+    if (expectedId !== undefined && this.rooms.get(roomKey)?.id !== expectedId) return;
     this.rooms.delete(roomKey);
   }
 
@@ -245,6 +228,7 @@ const config: AppConfig = {
   RATE_LIMIT_RECONNECT_PER_DEVICE_PER_MINUTE: 30,
   RATE_LIMIT_WS_PER_MINUTE: 60,
   MAX_WS_CONNECTIONS_PER_IP: 12,
+  MAX_WS_CONNECTIONS: 4_000,
   MAX_WS_MESSAGES_PER_MINUTE: 240,
   TURNSTILE_SOFT_LIMIT: 3,
   TURNSTILE_WINDOW_SECONDS: 600,
@@ -258,6 +242,67 @@ const config: AppConfig = {
 };
 
 const sockets: WebSocket[] = [];
+
+describe("WS-only recovery and resource admission", () => {
+  it.each(["a-first", "b-first", "simultaneous"])("coordinates %s without REST registration and releases stable signaling", async order => {
+    const store = new MemoryRoomStore();
+    const app = await buildApp({ config, store, logger: false });
+    const origin = await app.listen({ host: "127.0.0.1", port: 0 });
+    const devices = [createDevice("A"), createDevice("B")];
+    const peers = devices.map(() => new TestSocket(new WebSocket(origin.replace("http:", "ws:") + "/ws?role=host&code=123456")));
+    try {
+      await Promise.all(peers.map((peer, i) => peer.open({ type: "session_init", recoveryDevice: devices[i]!.identity,
+        deviceId: devices[i]!.identity.deviceId, peerDeviceId: devices[1 - i]!.identity.deviceId, connectionToken: "a".repeat(32) })));
+      const challenges = await Promise.all(peers.map(peer => peer.next()));
+      const authenticate = (i: number) => {
+        const challenge = challenges[i]!;
+        if (challenge.type !== "challenge") throw Error("Missing challenge");
+        peers[i]!.send({ type: "authenticate", device: devices[i]!.identity,
+          signature: sign("sha256", challengePayload("123456", challenge.challenge),
+            { key: devices[i]!.privateKey, dsaEncoding: "ieee-p1363" }).toString("base64url") });
+      };
+      const first = order === "b-first" ? 1 : 0;
+      authenticate(first);
+      if (order === "simultaneous") authenticate(1 - first);
+      expect((await peers[first]!.next()).type).toBe("room_ready");
+      if (order !== "simultaneous") authenticate(1 - first);
+      const accepted = await Promise.all(peers.map(peer => peer.next()));
+      expect(accepted.map(message => message.type === "peer_accepted" && message.rendezvous.role).sort()).toEqual(["guest", "host"]);
+      if (accepted[0]!.type !== "peer_accepted" || accepted[1]!.type !== "peer_accepted") throw Error("Not paired");
+      const sessionId = accepted[0]!.sessionId;
+      expect(sessionId).toBeTruthy(); expect(accepted[1]!.sessionId).toBe(sessionId);
+      expect(store.rooms.size).toBe(1);
+      peers.forEach(peer => peer.send({ type: "connected", sessionId }));
+      expect((await Promise.all(peers.map(peer => peer.next()))).map(m => m.type)).toEqual(["room_consumed", "room_consumed"]);
+      peers[0]!.send({ type: "signaling_stable", sessionId: "stale-session" });
+      peers[1]!.send({ type: "signaling_stable", sessionId });
+      await new Promise(resolve => setTimeout(resolve, 20));
+      expect(peers[0]!.socket.readyState).toBe(WebSocket.OPEN);
+      const closed = peers.map(peer => once(peer.socket, "close"));
+      peers[0]!.send({ type: "signaling_stable", sessionId });
+      await Promise.all(closed);
+      expect(store.rooms.size).toBe(0);
+    } finally { peers.forEach(peer => peer.socket.close()); await app.close(); }
+  });
+
+  it("caps sockets even before session_init and releases capacity on close", async () => {
+    const store = new MemoryRoomStore();
+    const app = await buildApp({ config: { ...config, MAX_WS_CONNECTIONS: 1 }, store, logger: false });
+    const origin = await app.listen({ host: "127.0.0.1", port: 0 });
+    const url = origin.replace("http:", "ws:") + "/ws?role=host&code=123456";
+    const first = new WebSocket(url);
+    try {
+      await once(first, "open");
+      const denied = new WebSocket(url);
+      await once(denied, "close");
+      expect(first.readyState).toBe(WebSocket.OPEN);
+      const ended = once(first, "close"); first.close(); await ended;
+      await new Promise(resolve => setTimeout(resolve, 20));
+      const next = new WebSocket(url); await once(next, "open");
+      const closed = once(next, "close"); next.close(); await closed;
+    } finally { first.close(); await app.close(); }
+  });
+});
 
 afterEach(() => {
   for (const socket of sockets.splice(0)) socket.close();
@@ -404,6 +449,113 @@ describe("public API protection", () => {
 });
 
 describe("signaling flow", () => {
+  it("does not let a stale approval failure close a newer waiting guest", async () => {
+    const store = new MemoryRoomStore();
+    const hostDevice = createDevice("Host");
+    const oldDevice = createDevice("Old guest");
+    const newDevice = createDevice("New guest");
+    let release!: () => void;
+    let entered!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const upsert = store.upsertCodeMember.bind(store);
+    store.upsertCodeMember = async (...args) => {
+      if (args[2].device.deviceId !== oldDevice.identity.deviceId) return upsert(...args);
+      entered();
+      await held;
+      return false;
+    };
+    const app = await buildApp({ config, store, logger: false });
+    const address = await app.listen({ host: "127.0.0.1", port: 0 });
+    try {
+      const response = await app.inject({ method: "POST", url: "/api/rooms", payload: { host: hostDevice.identity } });
+      const room = response.json<{ code: string; hostToken: string; connectionToken: string }>();
+      const open = async (role: string, device: TestDevice) => {
+        const raw = new WebSocket(`${address.replace("http:", "ws:")}/ws?role=${role}&code=${room.code}`);
+        sockets.push(raw);
+        const socket = new TestSocket(raw);
+        await socket.open({ type: "session_init", ...(role === "host" ? { token: room.hostToken, connectionToken: room.connectionToken } : {}) });
+        const challenge = await socket.next();
+        if (challenge.type !== "challenge") throw new Error("Missing challenge");
+        socket.send({ type: "authenticate", device: device.identity,
+          signature: sign("sha256", challengePayload(room.code, challenge.challenge), {
+            key: device.privateKey, dsaEncoding: "ieee-p1363",
+          }).toString("base64url"),
+        });
+        return socket;
+      };
+      const host = await open("host", hostDevice);
+      expect((await host.next()).type).toBe("room_ready");
+      const old = await open("guest", oldDevice);
+      expect((await host.next()).type).toBe("join_request");
+      host.send({ type: "accept_peer", deviceId: oldDevice.identity.deviceId });
+      await started;
+      old.socket.close();
+      const next = await open("guest", newDevice);
+      expect((await host.next()).type).toBe("join_request");
+      release();
+      host.send({ type: "accept_peer", deviceId: newDevice.identity.deviceId });
+      expect(await host.next()).toMatchObject({ type: "peer_accepted", peer: newDevice.identity });
+      expect((await next.next()).type).toBe("peer_accepted");
+    } finally { release(); await app.close(); }
+  });
+
+  it("closes an unverified guest by the room/authentication deadline", async () => {
+    const store = new MemoryRoomStore();
+    const app = await buildApp({ config: { ...config, ROOM_TTL_SECONDS: 1 }, store, logger: false });
+    const address = await app.listen({ host: "127.0.0.1", port: 0 });
+    const device = createDevice("Host");
+    try {
+      const response = await app.inject({ method: "POST", url: "/api/rooms", payload: { host: device.identity } });
+      const room = response.json<{ code: string; hostToken: string; connectionToken: string }>();
+      const open = async (role: string, init: Record<string, unknown>) => {
+        const raw = new WebSocket(`${address.replace("http:", "ws:")}/ws?role=${role}&code=${room.code}`);
+        sockets.push(raw);
+        const socket = new TestSocket(raw);
+        await socket.open(init);
+        return socket;
+      };
+      const host = await open("host", { type: "session_init", token: room.hostToken, connectionToken: room.connectionToken });
+      await authenticateHost(host, device, room.code);
+      const guest = await open("guest", { type: "session_init" });
+      expect((await guest.next()).type).toBe("challenge");
+      expect(await guest.next()).toMatchObject({ type: "error", code: "DEVICE_PROOF_TIMEOUT" });
+    } finally { await app.close(); }
+  });
+
+  it("does not let an unproven duplicate host replace or delete a live pairing room", async () => {
+    const store = new MemoryRoomStore();
+    const app = await buildApp({ config, store, logger: false });
+    const address = await app.listen({ host: "127.0.0.1", port: 0 });
+    const device = createDevice("Host");
+    const impostor = createDevice("Impostor");
+    try {
+      const response = await app.inject({ method: "POST", url: "/api/rooms", payload: { host: device.identity } });
+      const room = response.json<{ code: string; hostToken: string; connectionToken: string }>();
+      const connect = async () => {
+        const raw = new WebSocket(`${address.replace("http:", "ws:")}/ws?role=host&code=${room.code}`);
+        sockets.push(raw);
+        const socket = new TestSocket(raw);
+        await socket.open({ type: "session_init", token: room.hostToken, connectionToken: room.connectionToken });
+        return socket;
+      };
+      const host = await connect();
+      await authenticateHost(host, device, room.code);
+      const duplicate = await connect();
+      const challenge = await duplicate.next();
+      expect(challenge.type).toBe("challenge");
+      if (challenge.type !== "challenge") return;
+      duplicate.send({ type: "authenticate", device: device.identity,
+        signature: sign("sha256", challengePayload(room.code, challenge.challenge), {
+          key: impostor.privateKey, dsaEncoding: "ieee-p1363",
+        }).toString("base64url"),
+      });
+      expect(await duplicate.next()).toMatchObject({ type: "error", code: "DEVICE_PROOF_FAILED" });
+      expect(host.socket.readyState).toBe(WebSocket.OPEN);
+      expect(await store.getRoom(room.code)).not.toBeNull();
+    } finally { await app.close(); }
+  });
+
   it("creates a room, proves the guest device and consumes the code", async () => {
     const store = new MemoryRoomStore();
     const app = await buildApp({ config, store, logger: false });
@@ -472,6 +624,23 @@ describe("signaling flow", () => {
       expect((await host.next()).type).toBe("peer_accepted");
       expect((await guest.next()).type).toBe("peer_accepted");
 
+      // A new device knowing the short code cannot evict an accepted peer.
+      const thirdDevice = createDevice("Third");
+      const thirdRaw = new WebSocket(`${wsBase}/ws?role=guest&code=${room.code}`);
+      sockets.push(thirdRaw);
+      const third = new TestSocket(thirdRaw);
+      await third.open();
+      const thirdChallenge = await third.next();
+      if (thirdChallenge.type !== "challenge") throw new Error("Missing challenge");
+      third.send({ type: "authenticate", device: thirdDevice.identity,
+        signature: sign("sha256", challengePayload(room.code, thirdChallenge.challenge), {
+          key: thirdDevice.privateKey, dsaEncoding: "ieee-p1363",
+        }).toString("base64url"),
+      });
+      expect(await third.next()).toMatchObject({ type: "error", code: "ROOM_OCCUPIED" });
+      expect(hostRaw.readyState).toBe(WebSocket.OPEN);
+      expect(guestRaw.readyState).toBe(WebSocket.OPEN);
+
       guest.send({
         type: "signal",
         signal: { kind: "restart_request" },
@@ -483,11 +652,11 @@ describe("signaling flow", () => {
 
       host.send({
         type: "signal",
-        signal: { kind: "reconnect_request" },
+        signal: { kind: "restart_request" },
       });
       expect(await guest.next()).toEqual({
         type: "signal",
-        signal: { kind: "reconnect_request" },
+        signal: { kind: "restart_request" },
       });
 
       host.send({
@@ -512,6 +681,18 @@ describe("signaling flow", () => {
       guest.send({ type: "connected" });
       expect((await host.next()).type).toBe("room_consumed");
       expect((await guest.next()).type).toBe("room_consumed");
+      expect(hostRaw.readyState).toBe(WebSocket.OPEN);
+      expect(guestRaw.readyState).toBe(WebSocket.OPEN);
+      // Late candidates/restarts can still cross the authenticated socket pair.
+      const lateSignal = { type: "signal", signal: { kind: "restart_request" } };
+      guest.send(lateSignal);
+      expect(await host.next()).toEqual(lateSignal);
+      const lateGuestRaw = new WebSocket(`${wsBase}/ws?role=guest&code=${room.code}`);
+      sockets.push(lateGuestRaw);
+      const lateGuest = new TestSocket(lateGuestRaw);
+      await lateGuest.open();
+      expect(await lateGuest.next()).toEqual({ type: "room_closed", reason: "invalid_code" });
+      hostRaw.close();
       await Promise.all([hostClosed, guestClosed]);
       expect(await store.getRoom(room.code)).toBeNull();
 
@@ -598,7 +779,7 @@ describe("signaling flow", () => {
     }
   });
 
-  it("invalidates a room when the host IP changes", async () => {
+  it("allows an IP change while still requiring the host device proof", async () => {
     const store = new MemoryRoomStore();
     const app = await buildApp({ config, store, logger: false });
     const address = await app.listen({ host: "127.0.0.1", port: 0 });
@@ -626,12 +807,8 @@ describe("signaling flow", () => {
         token: room.hostToken,
         connectionToken: room.connectionToken,
       });
-      const closed = await host.next();
-      expect(closed).toEqual({
-        type: "room_closed",
-        reason: "ip_changed",
-      });
-      expect(await store.getRoom(room.code)).toBeNull();
+      await authenticateHost(host, hostDevice, room.code);
+      expect(await store.getRoom(room.code)).not.toBeNull();
     } finally {
       await app.close();
     }
@@ -648,7 +825,7 @@ describe("signaling flow", () => {
       const response = await app.inject({
         method: "POST",
         url: "/api/rooms",
-        remoteAddress: "127.0.0.1",
+        remoteAddress: "203.0.113.10",
         payload: { host: hostDevice.identity },
       });
       const room = response.json<{
@@ -926,8 +1103,94 @@ describe("signaling flow", () => {
     }
   });
 
-  it("restores a paired session after the server-side code registry expires", async () => {
-    const store = new MemoryRoomStore();
+  it("promotes the surviving verified socket and isolates stale proofs and negotiation frames", async () => {
+    const store = new InMemoryRoomStore({ maxRooms: 100, maxCodes: 100, maxRateBuckets: 100 });
+    const app = await buildApp({ config, store, logger: false });
+    const address = await app.listen({ host: "127.0.0.1", port: 0 });
+    const a = createDevice("A");
+    const b = createDevice("B");
+    const code = "123456";
+    const connectionToken = "a".repeat(32);
+    const key = reconnectRoomKey(code, connectionToken, a.identity.deviceId, b.identity.deviceId);
+    const open = async (device: TestDevice, peer: TestDevice) => {
+      const raw = new WebSocket(`${address.replace("http:", "ws:")}/ws?role=guest&code=${code}`);
+      sockets.push(raw);
+      const socket = new TestSocket(raw);
+      await socket.open({ type: "session_init", connectionToken,
+        deviceId: device.identity.deviceId, peerDeviceId: peer.identity.deviceId });
+      const challenge = await socket.next();
+      expect(challenge.type).toBe("challenge");
+      if (challenge.type !== "challenge") throw new Error("Missing challenge");
+      return { socket, prove: (signer = device) => socket.send({
+        type: "authenticate", device: device.identity,
+        signature: sign("sha256", challengePayload(code, challenge.challenge), {
+          key: signer.privateKey, dsaEncoding: "ieee-p1363",
+        }).toString("base64url"),
+      }) };
+    };
+    try {
+      for (const [device, peer] of [[a, b], [b, a]] as const) {
+        expect((await app.inject({ method: "POST", url: "/api/rooms/reconnect",
+          payload: { code, connectionToken, device: device.identity, peerDeviceId: peer.identity.deviceId },
+        })).statusCode).toBe(200);
+      }
+      const staleA = await open(a, b);
+      const activeA = await open(a, b);
+      activeA.prove();
+      expect((await activeA.socket.next()).type).toBe("room_ready");
+      staleA.prove();
+      expect(await staleA.socket.next()).toMatchObject({ type: "room_closed", reason: "replaced" });
+
+      const impostor = await open(a, b);
+      impostor.prove(b);
+      expect(await impostor.socket.next()).toMatchObject({ type: "error", code: "DEVICE_PROOF_FAILED" });
+      const activeB = await open(b, a);
+      activeB.prove();
+      const acceptedA = await activeA.socket.next();
+      const acceptedB = await activeB.socket.next();
+      expect(acceptedA.type).toBe("peer_accepted");
+      expect(acceptedB.type).toBe("peer_accepted");
+      if (acceptedA.type !== "peer_accepted") return;
+
+      activeA.socket.socket.close();
+      expect((await activeB.socket.next()).type).toBe("room_ready");
+      // B remains in the same user-initiated wait. A may come back with either
+      // old HTTP/query role; neither device needs another ordered click.
+      const replacementA = await open(a, b);
+      replacementA.prove();
+      const promotedB = await activeB.socket.next();
+      const newA = await replacementA.socket.next();
+      expect(promotedB.type).toBe("peer_accepted");
+      expect(newA.type).toBe("peer_accepted");
+      if (promotedB.type !== "peer_accepted" || newA.type !== "peer_accepted") return;
+      expect(promotedB.rendezvous.role).toBe("host");
+      expect(newA.rendezvous.role).toBe("guest");
+      expect(promotedB.sessionId).not.toBe(acceptedA.sessionId);
+      const sessionId = promotedB.sessionId;
+      activeB.socket.send({ type: "signal", sessionId: acceptedA.sessionId,
+        signal: { kind: "description", description: { type: "offer", sdp: "stale" } } });
+      activeB.socket.send({ type: "connected", sessionId: acceptedA.sessionId });
+      const marker = { type: "signal", sessionId,
+        signal: { kind: "description", description: { type: "offer", sdp: "current" } } };
+      activeB.socket.send(marker);
+      expect(await replacementA.socket.next()).toEqual(marker);
+      expect(await store.getRoom(code, key)).not.toBeNull();
+      activeB.socket.send({ type: "connected", sessionId });
+      replacementA.socket.send({ type: "connected", sessionId });
+      expect((await activeB.socket.next()).type).toBe("room_consumed");
+      expect((await replacementA.socket.next()).type).toBe("room_consumed");
+    } finally { await app.close(); }
+  });
+
+  it.each([false, true].flatMap(stale => [false, true].flatMap(reverse =>
+    [false, true].flatMap(guestFirst => [false, true].map(authenticateGuestFirst =>
+      ({ stale, reverse, guestFirst, authenticateGuestFirst }))),
+  )))("restores paired sessions with the real store: %j", async ({ stale, reverse, guestFirst, authenticateGuestFirst }) => {
+    const store = new InMemoryRoomStore({
+      maxRooms: config.MAX_PENDING_ROOMS,
+      maxCodes: config.MAX_CODE_RECORDS,
+      maxRateBuckets: config.MAX_RATE_BUCKETS,
+    });
     const app = await buildApp({ config, store, logger: false });
     const address = await app.listen({ host: "127.0.0.1", port: 0 });
     const deviceA = createDevice("Device A");
@@ -947,13 +1210,32 @@ describe("signaling flow", () => {
 
       // Simulate the server losing all of its short-lived in-memory state.
       // The two browsers still retain their paired credential locally.
-      store.rooms.clear();
-      store.codes.clear();
+      await store.deleteRoom(pairedCredential.code);
+      await store.deleteCode(pairedCredential.code, hashToken(pairedCredential.connectionToken));
+      const pairRoomKey = reconnectRoomKey(
+        pairedCredential.code, pairedCredential.connectionToken,
+        deviceA.identity.deviceId, deviceB.identity.deviceId,
+      );
+      if (stale) {
+        await store.createRoom({
+          id: "stale-room",
+          code: pairedCredential.code,
+          host: deviceA.identity,
 
+          hostTokenHash: hashToken(pairedCredential.connectionToken),
+          shareTokenHash: hashToken(pairedCredential.connectionToken),
+          resume: true,
+          peerDeviceId: deviceB.identity.deviceId,
+          createdAt: Date.now() - 10_000,
+          expiresAt: Date.now() + 300_000,
+        }, 300, pairRoomKey);
+      }
+
+      const devices = reverse ? [deviceB, deviceA] : [deviceA, deviceB];
       const registrations = await Promise.all(
         [
-          { device: deviceA, peer: deviceB },
-          { device: deviceB, peer: deviceA },
+          { device: devices[0]!, peer: devices[1]! },
+          { device: devices[1]!, peer: devices[0]! },
         ].map(async ({ device, peer }) => {
           const response = await app.inject({
             method: "POST",
@@ -982,62 +1264,68 @@ describe("signaling flow", () => {
       );
       expect(hostRegistration).toBeDefined();
       expect(guestRegistration).toBeDefined();
+      expect(store.stats().rooms).toBe(1);
       if (!hostRegistration || !guestRegistration) return;
 
       const wsBase = address.replace("http:", "ws:");
-      const hostRaw = new WebSocket(
-        `${wsBase}/ws?role=host&code=${pairedCredential.code}`,
-      );
-      sockets.push(hostRaw);
-      const host = new TestSocket(hostRaw);
-      await host.open({
-        type: "session_init",
-        token: pairedCredential.connectionToken,
-        connectionToken: pairedCredential.connectionToken,
-        deviceId: hostRegistration.device.identity.deviceId,
-        peerDeviceId: hostRegistration.peer.identity.deviceId,
-      });
-      await authenticateHost(
-        host,
-        hostRegistration.device,
-        pairedCredential.code,
-      );
-
-      const guestRaw = new WebSocket(
-        `${wsBase}/ws?role=guest&code=${pairedCredential.code}`,
-      );
-      sockets.push(guestRaw);
-      const guest = new TestSocket(guestRaw);
-      await guest.open({
-        type: "session_init",
-        connectionToken: pairedCredential.connectionToken,
-        deviceId: guestRegistration.device.identity.deviceId,
-        peerDeviceId: guestRegistration.peer.identity.deviceId,
-      });
+      const open = async (registration: typeof hostRegistration) => {
+        // Both sockets deliberately claim Host. The authenticated coordinator
+        // must ignore this hint, including when the HTTP Guest proves first.
+        const raw = new WebSocket(wsBase + "/ws?role=host&code=" + pairedCredential.code);
+        sockets.push(raw);
+        const socket = new TestSocket(raw);
+        await socket.open({
+          type: "session_init", connectionToken: pairedCredential.connectionToken,
+          deviceId: registration.device.identity.deviceId,
+          peerDeviceId: registration.peer.identity.deviceId,
+        });
+        return socket;
+      };
+      const firstOpened = guestFirst ? guestRegistration : hostRegistration;
+      const secondOpened = guestFirst ? hostRegistration : guestRegistration;
+      const socketsByDevice = new Map([
+        [firstOpened.device, await open(firstOpened)],
+        [secondOpened.device, await open(secondOpened)],
+      ]);
+      const firstAuthenticated = authenticateGuestFirst ? guestRegistration : hostRegistration;
+      const secondAuthenticated = authenticateGuestFirst ? hostRegistration : guestRegistration;
+      const host = socketsByDevice.get(firstAuthenticated.device)!;
+      const guest = socketsByDevice.get(secondAuthenticated.device)!;
+      await authenticateHost(host, firstAuthenticated.device, pairedCredential.code);
       const challenge = await guest.next();
       expect(challenge.type).toBe("challenge");
       if (challenge.type !== "challenge") return;
-      const signature = sign(
-        "sha256",
-        challengePayload(pairedCredential.code, challenge.challenge),
-        {
-          key: guestRegistration.device.privateKey,
-          dsaEncoding: "ieee-p1363",
-        },
-      ).toString("base64url");
       guest.send({
-        type: "authenticate",
-        device: guestRegistration.device.identity,
-        signature,
-        connectionToken: pairedCredential.connectionToken,
+        type: "authenticate", device: secondAuthenticated.device.identity,
+        signature: sign("sha256", challengePayload(pairedCredential.code, challenge.challenge), {
+          key: secondAuthenticated.device.privateKey, dsaEncoding: "ieee-p1363",
+        }).toString("base64url"),
       });
-
-      expect((await host.next()).type).toBe("peer_accepted");
-      expect((await guest.next()).type).toBe("peer_accepted");
-      host.send({ type: "connected" });
-      guest.send({ type: "connected" });
+      const acceptedHost = await host.next();
+      const acceptedGuest = await guest.next();
+      expect(acceptedHost.type).toBe("peer_accepted");
+      expect(acceptedGuest.type).toBe("peer_accepted");
+      if (acceptedHost.type !== "peer_accepted" || acceptedGuest.type !== "peer_accepted") return;
+      expect(acceptedHost.rendezvous.role).toBe("host");
+      expect(acceptedGuest.rendezvous.role).toBe("guest");
+      const sessionId = acceptedHost.sessionId;
+      expect(sessionId).toBeTruthy();
+      expect(acceptedGuest.sessionId).toBe(sessionId);
+      const offer = { type: "signal", sessionId, signal: {
+        kind: "description", description: { type: "offer", sdp: "recovery-offer" },
+      } };
+      host.send(offer);
+      expect(await guest.next()).toEqual(offer);
+      const answer = { type: "signal", sessionId, signal: {
+        kind: "description", description: { type: "answer", sdp: "recovery-answer" },
+      } };
+      guest.send(answer);
+      expect(await host.next()).toEqual(answer);
+      host.send({ type: "connected", sessionId });
+      guest.send({ type: "connected", sessionId });
       expect((await host.next()).type).toBe("room_consumed");
       expect((await guest.next()).type).toBe("room_consumed");
+      expect(await store.getRoom(pairedCredential.code, pairRoomKey)).toBeNull();
     } finally {
       await app.close();
     }

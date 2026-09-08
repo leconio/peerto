@@ -2,6 +2,23 @@
 
 [中文](./troubleshooting.zh-CN.md)
 
+## Collect connection logs
+
+Open the browser Console, enable Info and Warning messages, enable Preserve log, and filter for `[Peerto connection]` before reproducing on both devices. Entries include an anonymous browser-client label, attempt/connection counters, the assigned role, current ICE/SDP states, operation duration and safe error categories.
+
+- `ws_connect/open/close`, `ws_timeout` and `ws_message_failed` locate signaling or authentication failures. A close after consumption can be expected.
+- `sdp_create_offer/answer`, `sdp_set_local` and `sdp_set_remote` have `_start`, `_ok` and `_failed` entries. A failed entry includes the browser error category and SDP line number when available, never the SDP itself.
+- `local_candidate`, `remote_candidate` and `ice_add_candidate_failed` distinguish gathering, queued/stale candidates and application failures. A single `ice_candidate_error` (including 701) does not by itself mean the entire connection failed; compare the other candidates and final ICE state.
+- `ice_restart` and `previous_path_*` show fresh negotiation versus reuse of the retained path. A failed state still requires a manual retry.
+
+Peerto keeps only the latest 200 entries per client in memory and writes them to the browser console; it does not upload them. Raw SDP, candidate addresses/ports, URLs, device names/keys, tokens, chat and file contents are excluded. Share only the filtered connection entries, not an unreviewed full browser log.
+
+## QR links and clipboard attachments
+
+Use the QR in “Connect another device” before its code expires. It is generated locally from the same-origin share link. A new browser must allow the consent cookie/local storage and choose its own name; the pending invitation survives these gates and is consumed only when the identity is ready. Returning browsers reuse their own identity and name. Opening the QR in a different browser or an in-app browser uses a different storage context: use the same browser to retain the same device. Cookies and private keys are never copied between devices.
+
+Paste into the message input with the browser's normal paste action. Text stays editable; exposed files/screenshots appear in a confirmation dialog. Multiple files can also be selected with the attachment button. Remove unwanted items or cancel; only confirmation queues transmission. Up to 32 files can be queued per connection, sent serially. Switching conversations clears unconfirmed attachments; disconnecting cancels queued transfers, without automatic resending. Browsers/operating systems that expose only text or file paths instead of file bytes cannot provide those files through paste; use the file picker in that case.
+
 ## Direct connection keeps failing
 
 Common causes:
@@ -13,7 +30,7 @@ Common causes:
 - A firewall drops the random UDP ports used by WebRTC
 - Public STUN is unreachable from the current network
 
-Keep both UDP and TCP TURN URLs in Settings, then reopen the conversation. If the header says "Relayed connection", direct connection failed and ICE selected TURN.
+If you choose to use TURN, keep UDP and TCP URLs in Settings, then click Retry connection in the composer. Without TURN, check LAN reachability, UDP, firewalls, and STUN availability as described below.
 
 STUN only discovers addresses. It does not relay data, so adding more STUN services cannot solve every NAT problem.
 
@@ -29,11 +46,9 @@ Check:
 4. Whether the browser permits WebRTC.
 5. Whether the firewall permits browser UDP traffic.
 
-A paired device can use a custom IP. The two devices still need a real route, and Peerto WebSocket signaling is still required for SDP exchange. A custom IP does not pin the random UDP port selected by the browser.
-
 ## A code exists but the other device cannot find the host
 
-A connection code is bound to the source IP used when the host reaches Peerto. If the host moves from Wi-Fi to mobile data, toggles a VPN, or changes egress IP, the old room expires. Close the old dialog and create a new code.
+Hosts still require credentials and device-key verification, but differing HTTP and WSS egress IPs alone no longer cause rejection. If switching networks disconnects a conversation, click Retry connection in its composer. Expired ordinary pairing codes still need to be regenerated.
 
 Check both system clocks, the HTTPS certificate, and WebSocket connectivity. The reverse proxy must handle the `/ws` Upgrade correctly.
 
@@ -46,7 +61,11 @@ Recovery needs both browsers to retain:
 - Their own P-256 private key
 - The peer device identity
 
-When both devices open the conversation, the first registers and waits while the second joins. If site data was cleared, private browsing was used, or the browser evicted storage, pair the devices again.
+Both devices can click Retry connection in either order or simultaneously. If the previous authenticated transport is still retained, the click first probes it for up to 1.5 seconds; otherwise it starts fresh signaling and ICE. The server assigns roles after device proof, independent of HTTP request order. Opening a conversation or regaining network access does not reconnect automatically; failure waits for another click.
+
+A cached IP alone cannot reopen a closed WebRTC connection: the old port, ICE credentials, and NAT mapping may no longer be valid. Previous-path reuse is limited to the existing authenticated socket retained for 30 idle seconds; it is not candidate rewriting or a shortcut around ICE security. Without TURN, some NAT/firewall combinations still cannot connect directly.
+
+Recovery cannot succeed when the two sides no longer hold the same pairing namespace and recovery token, when either device private key changed, or when one side has a stale peer identity after only the other side was re-paired. If site data was cleared, private browsing was used, storage authorization was blocked, or the browser evicted storage, pair the devices again.
 
 ## Mobile file receiving fails
 

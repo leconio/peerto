@@ -1,14 +1,6 @@
-import type {
-  Dispatch,
-  MutableRefObject,
-  SetStateAction,
-} from "react";
+import type { MutableRefObject } from "react";
 import { useEffect } from "react";
 import type { PeerClient } from "../../services/peer";
-import {
-  conversationRetryAfterNetworkReturn,
-  type ConversationRetryState,
-} from "../../services/conversation-retry";
 
 interface NetworkAwarePeerClient {
   setNetworkAvailable: (
@@ -22,19 +14,15 @@ export function updatePeerClientsForNetwork(
   pairingClient: NetworkAwarePeerClient,
   sessionClients: Iterable<NetworkAwarePeerClient>,
 ): void {
-  pairingClient.setNetworkAvailable(online);
+  pairingClient.setNetworkAvailable(online, false);
   for (const peerClient of sessionClients) {
-    peerClient.setNetworkAvailable(online, online ? false : undefined);
+    peerClient.setNetworkAvailable(online, false);
   }
 }
 
 export function usePeerNetworkEvents(
   client: PeerClient | undefined,
   peerClientsRef: MutableRefObject<Map<string, PeerClient>>,
-  selectedIdRef: MutableRefObject<string>,
-  setConversationRetry: Dispatch<
-    SetStateAction<ConversationRetryState | undefined>
-  >,
 ): void {
   useEffect(() => {
     if (!client) return;
@@ -43,12 +31,6 @@ export function usePeerNetworkEvents(
         true,
         client,
         peerClientsRef.current.values(),
-      );
-      setConversationRetry((current) =>
-        conversationRetryAfterNetworkReturn(
-          current,
-          selectedIdRef.current,
-        ),
       );
     };
     const onOffline = () => {
@@ -63,21 +45,30 @@ export function usePeerNetworkEvents(
     ).connection;
     const onConnectionChange = () => {
       if (navigator.onLine && !client.isOnline) {
-        void client.probePublicAddresses();
+        client.invalidatePublicAddresses();
+      }
+    };
+    const onResume = () => {
+      if (document.visibilityState === "hidden" || !navigator.onLine) return;
+      client.checkConnectionAfterResume();
+      for (const peerClient of peerClientsRef.current.values()) {
+        peerClient.checkConnectionAfterResume();
       }
     };
     window.addEventListener("online", onOnline);
     window.addEventListener("offline", onOffline);
     connection?.addEventListener("change", onConnectionChange);
+    window.addEventListener("pageshow", onResume);
+    document.addEventListener("visibilitychange", onResume);
     return () => {
       window.removeEventListener("online", onOnline);
       window.removeEventListener("offline", onOffline);
       connection?.removeEventListener("change", onConnectionChange);
+      window.removeEventListener("pageshow", onResume);
+      document.removeEventListener("visibilitychange", onResume);
     };
   }, [
     client,
     peerClientsRef,
-    selectedIdRef,
-    setConversationRetry,
   ]);
 }

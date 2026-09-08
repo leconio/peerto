@@ -25,12 +25,16 @@ export type RuntimeCode =
   | "waitingForKnownPeer"
   | "codeReady"
   | "validatingCode"
+  | "checkingPreviousPath"
   | "validatingIdentity"
   | "establishingP2P"
   | "negotiatingP2P"
   | "peerOffline"
   | "heartbeatTimeout"
   | "signalingUnavailable"
+  | "signalingTimeout"
+  | "icePolicyChanging"
+  | "icePolicyFailed"
   | "signalingDisconnected"
   | "invalidServerMessage"
   | "incompatibleServerMessage"
@@ -38,11 +42,10 @@ export type RuntimeCode =
   | "peerIdentityMismatch"
   | "codeExpired"
   | "hostOffline"
-  | "hostIpChanged"
+  | "connectionIpChanged"
   | "invalidCode"
   | "connectionReplaced"
   | "directConnectionFailed"
-  | "customIpConnectionFailed"
   | "connectionInterrupted"
   | "fileRejected"
   | "fileChannelClosed"
@@ -69,7 +72,6 @@ export interface PeerReconnectTarget {
   deviceId: string;
   code: string;
   token: string;
-  customIp?: string;
 }
 
 export interface FileOffer {
@@ -109,7 +111,7 @@ export interface PeerClientCallbacks {
   onPeer: (
     device: DeviceIdentity,
     rendezvous?: RendezvousInfo,
-    automatic?: boolean,
+    restored?: boolean,
   ) => void;
   onText: (message: {
     id: string;

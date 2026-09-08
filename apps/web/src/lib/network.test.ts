@@ -4,6 +4,7 @@ import {
   connectionRouteFromCandidates,
   isLanAddress,
   isMdnsCandidateAddress,
+  peerAddressForRoute,
   reconcileConnectionRoutes,
   selectedCandidatePairFromStats,
   usableConnectionAddress,
@@ -104,6 +105,21 @@ describe("connectionRouteFromCandidates", () => {
     );
     expect(route.kind).toBe("relay");
     expect(route.protocol).toBe("udp");
+  });
+
+  it("exposes only an online direct peer address for display", () => {
+    const direct = connectionRouteFromCandidates(
+      endpoint("192.168.1.2", "host"),
+      endpoint("192.168.1.3", "host"),
+    );
+    expect(peerAddressForRoute(direct, true)).toBe("192.168.1.3");
+    expect(peerAddressForRoute(direct, false)).toBeUndefined();
+    expect(
+      peerAddressForRoute(
+        { kind: "relay", remoteAddress: "198.51.100.20" },
+        true,
+      ),
+    ).toBeUndefined();
   });
 
   it("classifies mDNS host pairs as a LAN route", () => {

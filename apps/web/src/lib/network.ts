@@ -30,6 +30,14 @@ export interface SelectedIceCandidatePair {
   remote: IceCandidateEndpoint;
 }
 
+export function peerAddressForRoute(
+  route: ConnectionRoute | undefined,
+  online: boolean,
+): string | undefined {
+  if (!online || !route || route.kind === "relay") return undefined;
+  return usableConnectionAddress(route.remoteAddress);
+}
+
 export function isMdnsCandidateAddress(
   address: string | null | undefined,
 ): boolean {

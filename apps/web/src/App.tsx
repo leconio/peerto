@@ -1,4 +1,5 @@
 import type { DeviceIdentity } from "@peerto/protocol";
+import { GithubLogo } from "@phosphor-icons/react";
 import {
   useCallback,
   useEffect,
@@ -13,7 +14,6 @@ import {
   ConnectionDialogs,
   type ConnectionDialogKind,
 } from "./features/connection/ConnectionDialogs";
-import { CustomIpDialog } from "./features/connection/CustomIpDialog";
 import {
   type PendingSharedJoin,
   sharedJoinFromLocation,
@@ -33,11 +33,10 @@ import {
 import { useResourceActions } from "./features/resources/use-resource-actions";
 import { SettingsDialog } from "./features/settings/SettingsDialog";
 import { TurnstileDialog } from "./features/security/TurnstileDialog";
-import { ConversationRetryOverlay } from "./features/retry/ConversationRetryOverlay";
-import { useConversationRetryLifecycle } from "./features/retry/use-conversation-retry-lifecycle";
 import { usePeerClientManager } from "./features/session/use-peer-client-manager";
 import type { TransferProgress } from "./features/transfers/types";
 import { useFileSelection } from "./features/transfers/use-file-selection";
+import { AttachmentDialog } from "./features/transfers/AttachmentDialog";
 import { useAutoDismiss } from "./hooks/use-auto-dismiss";
 import { useDismissibleMenu } from "./hooks/use-dismissible-menu";
 import {
@@ -49,7 +48,7 @@ import {
   saveIceServerSettings,
 } from "./lib/ice-settings";
 import { canReuseHostRoom } from "./lib/host-room";
-import { normalizeCustomIp } from "./lib/custom-ip";
+import { peerAddressForRoute } from "./lib/network";
 import {
   loadMaxActivePeerClients,
   saveMaxActivePeerClients,
@@ -61,7 +60,6 @@ import {
   type RuntimeCode,
   PeerClientError,
 } from "./services/peer";
-import type { ConversationRetryState } from "./services/conversation-retry";
 import {
   SAVED_CONVERSATION_ID,
   type KnownPeer,
@@ -85,7 +83,6 @@ export function App() {
     setTheme,
     upsertPeer,
     removeConversation,
-    setPeerCustomIp,
     addMessage,
     removeMessage,
     updateMessage,
@@ -104,16 +101,11 @@ export function App() {
     useState<ConnectionDialogKind>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [peerMenuOpen, setPeerMenuOpen] = useState(false);
-  const [conversationRetry, setConversationRetry] =
-    useState<ConversationRetryState>();
   const [deleteConfirmation, setDeleteConfirmation] =
     useState<KnownPeer>();
   const [deleteForPeer, setDeleteForPeer] = useState(false);
   const [deleteConversationPending, setDeleteConversationPending] =
     useState(false);
-  const [customIpPeer, setCustomIpPeer] = useState<KnownPeer>();
-  const [customIpDraft, setCustomIpDraft] = useState("");
-  const [customIpError, setCustomIpError] = useState<string>();
   const [room, setRoom] = useState<RoomInfo>();
   const [joinCode, setJoinCode] = useState("");
   const [joinRequest, setJoinRequest] = useState<DeviceIdentity>();
@@ -172,13 +164,7 @@ export function App() {
         for (const messageId of messageIds) delete next[messageId];
         return next;
       });
-      setConversationRetry((current) =>
-        current?.peerId === peerId ? undefined : current,
-      );
       setDeleteConfirmation((current) =>
-        current?.deviceId === peerId ? undefined : current,
-      );
-      setCustomIpPeer((current) =>
         current?.deviceId === peerId ? undefined : current,
       );
       setResourceViewer((current) =>
@@ -225,7 +211,6 @@ export function App() {
     setConnectionDialog,
     setRoom,
     setJoinRequest,
-    setConversationRetry,
     setSelectedId,
     setMobileConversation,
     setReplyingTo,
@@ -268,13 +253,6 @@ export function App() {
     handledRef: sharedJoinHandledRef,
     setJoinCode,
     setConnectionDialog,
-  });
-  useConversationRetryLifecycle({
-    retry: conversationRetry,
-    peersRef,
-    getOrCreateClient: getOrCreatePeerClient,
-    getClient: getPeerClient,
-    setRetry: setConversationRetry,
   });
   useAutoDismiss(notice, setNotice, 4_000);
   useDismissibleMenu(peerMenuOpen, peerMenuRef, setPeerMenuOpen);
@@ -325,18 +303,6 @@ export function App() {
       onlinePeerIds.has(deleteConfirmation.deviceId) &&
       getPeerClient(deleteConfirmation.deviceId)?.isOnline,
   );
-  const retryPeer = conversationRetry
-    ? peers.find((peer) => peer.deviceId === conversationRetry.peerId)
-    : undefined;
-  const retrySecondsRemaining =
-    conversationRetry?.phase === "waiting"
-      ? Math.max(
-          0,
-          Math.ceil(
-            ((conversationRetry.nextAttemptAt || now) - now) / 1_000,
-          ),
-        )
-      : 0;
   const secondsRemaining = room
     ? Math.max(0, Math.ceil((room.expiresAt - now) / 1_000))
     : 0;
@@ -351,12 +317,16 @@ export function App() {
           protocol: connectionRoute.protocol.toUpperCase(),
         })
       : connectionRouteLabel;
-  const connectionRouteSummary =
-    selectedPeer?.customIp && onlineForSelection
-      ? t("connectionRoute.customIp", {
-          route: automaticRouteSummary,
-        })
-      : automaticRouteSummary;
+  const peerIpAddress = peerAddressForRoute(
+    connectionRoute,
+    onlineForSelection,
+  );
+  const connectionRouteSummary = peerIpAddress
+    ? t("connectionRoute.withPeerIp", {
+        route: automaticRouteSummary,
+        ip: peerIpAddress,
+      })
+    : automaticRouteSummary;
 
   const requestHumanVerification = useCallback((): Promise<string> => {
     if (!apiConfig?.turnstileSiteKey) {
@@ -384,10 +354,10 @@ export function App() {
   }, []);
 
   const {
-    cancelConversationRetry,
+    cancelConversationConnection,
     createRoom,
     refreshPublicAddresses,
-    retryConversationImmediately,
+    retryConversation,
     selectConversation,
     submitJoin,
   } = useConnectionActions({
@@ -396,9 +366,9 @@ export function App() {
     ipProbing,
     joinCode,
     getPeerClient,
+    getOrCreatePeerClient,
     activatePeerClient,
     inputRef,
-    setConversationRetry,
     setPeerMenuOpen,
     setReplyingTo,
     setPinnedCursor,
@@ -460,9 +430,6 @@ export function App() {
     }
 
     removePeerClient(peer.deviceId);
-    setConversationRetry((current) =>
-      current?.peerId === peer.deviceId ? undefined : current,
-    );
     setProgress((current) => {
       const next = { ...current };
       for (const messageId of messageIds) delete next[messageId];
@@ -513,7 +480,8 @@ export function App() {
     setMessagePinned,
   });
 
-  const { onMobileFileSelected, selectFile } = useFileSelection({
+  const { onMobileFileSelected, selectFile, onComposerPaste, pendingAttachments, attachmentsSending,
+    confirmAttachments, cancelAttachments, removeAttachment } = useFileSelection({
     identity,
     replyingTo,
     selectedId,
@@ -527,6 +495,7 @@ export function App() {
     setProgress,
     addMessage,
     updateMessage,
+    setDraft,
   });
 
   const {
@@ -554,6 +523,16 @@ export function App() {
     }
   };
 
+  const copyMessage = async (message: StoredMessage) => {
+    if (message.kind !== "text" || message.text === undefined) return;
+    try {
+      await navigator.clipboard.writeText(message.text);
+      setNotice({ key: "message.copied" });
+    } catch {
+      setNotice({ key: "error.CLIPBOARD_FAILED" });
+    }
+  };
+
   const shareRoom = async () => {
     if (!room?.shareToken) return;
     const url = shareUrl(room);
@@ -574,44 +553,13 @@ export function App() {
     }
   };
 
-  const reconnectAfterCustomIpChange = (
-    peer: KnownPeer,
-    customIp: string | undefined,
-  ) => {
-    setPeerCustomIp(peer.deviceId, customIp);
-    getPeerClient(peer.deviceId)?.disconnect(false);
-    setPeerOffline(
-      peer.deviceId,
-      navigator.onLine ? "peerOffline" : "networkOffline",
-    );
-    setCustomIpPeer(undefined);
-    setCustomIpError(undefined);
-    setConversationRetry({
-      peerId: peer.deviceId,
-      attempt: 1,
-      phase: "attempting",
-    });
-    setNotice({
-      key: customIp ? "customIp.saved" : "customIp.cleared",
-    });
-  };
-
-  const saveCustomIp = () => {
-    if (!customIpPeer) return;
-    const customIp = normalizeCustomIp(customIpDraft);
-    if (!customIp) {
-      setCustomIpError(t("customIp.invalid"));
-      return;
-    }
-    reconnectAfterCustomIpChange(customIpPeer, customIp);
-  };
-
   return (
     <div className={styles.appShell}>
       <input
         ref={fileInputRef}
         className={styles.hiddenFileInput}
         type="file"
+        multiple
         onChange={onMobileFileSelected}
       />
 
@@ -646,6 +594,11 @@ export function App() {
         selectedMessages={selectedMessages}
         ownDeviceId={identity?.device.deviceId}
         onlineForSelection={onlineForSelection}
+        connectionStatus={selectedRuntime?.status || "offline"}
+        connectionDetail={selectedRuntime?.detail || "peerOffline"}
+        retryAvailable={Boolean(client) && status !== "network_offline"}
+        onRetryConnection={() => { if (selectedPeer) void retryConversation(selectedPeer); }}
+        onCancelConnection={() => cancelConversationConnection(selectedId)}
         connectionRouteSummary={connectionRouteSummary}
         peerMenuOpen={peerMenuOpen}
         peerMenuRef={peerMenuRef}
@@ -659,13 +612,6 @@ export function App() {
         inputRef={inputRef}
         onBack={() => setMobileConversation(false)}
         onTogglePeerMenu={() => setPeerMenuOpen((open) => !open)}
-        onConfigureCustomIp={() => {
-          setPeerMenuOpen(false);
-          if (!selectedPeer) return;
-          setCustomIpPeer(selectedPeer);
-          setCustomIpDraft(selectedPeer.customIp || "");
-          setCustomIpError(undefined);
-        }}
         onDeleteConversation={() => {
           setPeerMenuOpen(false);
           if (selectedPeer) {
@@ -677,6 +623,7 @@ export function App() {
         onOpenPinnedMessage={openActivePinnedMessage}
         onTogglePin={toggleMessagePin}
         onDeleteMessage={deleteOwnMessage}
+        onCopyMessage={(message) => void copyMessage(message)}
         onOpenFile={(message) => void openResourcePreview(message)}
         onStopFile={(message) => {
           if (
@@ -692,8 +639,25 @@ export function App() {
         onSelectFile={() => void selectFile()}
         onDraftChange={setDraft}
         onComposerKeyDown={handleComposerKeyDown}
+        onComposerPaste={onComposerPaste}
         onSend={sendMessage}
       />
+
+      <a
+        className={styles.githubLink}
+        href="https://github.com/leconio/peerto"
+        target="_blank"
+        rel="noreferrer"
+        title={t("action.openGithub")}
+        aria-label={t("action.openGithub")}
+      >
+        <GithubLogo size={21} weight="fill" />
+      </a>
+
+      <AttachmentDialog attachments={pendingAttachments} sending={attachmentsSending}
+        canSend={Boolean(identity) && (selectedId === SAVED_CONVERSATION_ID || onlineForSelection)}
+        recipient={selectedId === SAVED_CONVERSATION_ID ? t("savedMessages") : selectedPeer?.name || t("device")}
+        onConfirm={() => void confirmAttachments()} onCancel={cancelAttachments} onRemove={removeAttachment} />
 
       <ConnectionDialogs
         dialog={connectionDialog}
@@ -759,29 +723,6 @@ export function App() {
         onDeleteForPeerChange={setDeleteForPeer}
         onConfirmDelete={() => void deleteSelectedConversation()}
       />
-
-      {customIpPeer && (
-        <CustomIpDialog
-          peer={customIpPeer}
-          value={customIpDraft}
-          error={customIpError}
-          onValueChange={(value) => {
-            setCustomIpDraft(value);
-            setCustomIpError(undefined);
-          }}
-          onSave={(event) => {
-            event.preventDefault();
-            saveCustomIp();
-          }}
-          onClear={() =>
-            reconnectAfterCustomIpChange(customIpPeer, undefined)
-          }
-          onClose={() => {
-            setCustomIpPeer(undefined);
-            setCustomIpError(undefined);
-          }}
-        />
-      )}
 
       {settingsOpen && (
         <SettingsDialog
@@ -851,28 +792,6 @@ export function App() {
           onDelete={() =>
             void deleteStoredResource(resourceViewer.message)
           }
-        />
-      )}
-
-      {conversationRetry && (
-        <ConversationRetryOverlay
-          retry={conversationRetry}
-          peerName={retryPeer?.name}
-          status={
-            peerRuntimes[conversationRetry.peerId]?.status ||
-            (navigator.onLine ? "offline" : "network_offline")
-          }
-          secondsRemaining={retrySecondsRemaining}
-          customIp={Boolean(retryPeer?.customIp)}
-          onRetryNow={retryConversationImmediately}
-          onCancel={cancelConversationRetry}
-          onEditCustomIp={() => {
-            if (!retryPeer) return;
-            cancelConversationRetry();
-            setCustomIpPeer(retryPeer);
-            setCustomIpDraft(retryPeer.customIp || "");
-            setCustomIpError(undefined);
-          }}
         />
       )}
 

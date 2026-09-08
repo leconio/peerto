@@ -31,7 +31,6 @@ apps/web/src/
 │   ├── conversations/       Conversation list
 │   ├── messages/            Message flow, replies, pins, and actions
 │   ├── resources/           Local preview, download, and deletion
-│   ├── retry/               Session recovery and backoff
 │   ├── security/            On-demand Turnstile verification
 │   ├── session/             Peer pool, scoped events, and UI adapters
 │   ├── settings/            Settings UI
@@ -57,10 +56,13 @@ main → App → features/components
 
 - `App.tsx` wires state, feature hooks, and page sections. It should not define large UI blocks.
 - Features may depend on shared components, services, `lib`, and the store. They must not depend back on `App.tsx`.
+- Offline conversations reconnect only on user clicks, without React auto-retry state or modal retry overlays.
+- An authenticated transport may be parked for 30 idle seconds. A retry click first gives its previous path a 1.5-second nonce probe; failure closes it and starts fresh ICE. Parked sessions do not process application data or automatically become online.
 - WebRTC, WSS, ICE, and file transfer protocols belong in `services/peer`. React components do not manipulate low-level connections.
 - Every connected device has its own `PeerClient`. The pairing client is separate from device session clients, so switching conversations does not reuse one connection.
-- The default device session limit is 4 and can be set from 1 to 32. At the limit, Peerto first removes the least recently used offline client. It then disconnects the least recently used online client that is not the open conversation. Opening a removed session creates it again when needed.
-- A custom IP stays in the local `KnownPeer` record. `PeerClient` disables ICE servers for that device and rewrites the remote host candidate in the browser.
+- The default device session limit is 4 and can be set from 1 to 32. At the limit, Peerto first removes the least recently used offline client, then the least recently used online background client. A pruned client is recreated only when the user clicks Retry connection.
+- `AppBootstrap` checks the required consent cookie before loading the application state. A new installation also stores an explicit device name before creating its device identity.
+- The selected ICE pair remains local. A direct connection may show its sanitized remote candidate address in the conversation header, while relay candidates never expose a TURN address as the peer IP.
 - ICE settings combine multiple TURN URLs into one standard `RTCIceServer` with one username and password. TURN remains independent of the application deployment.
 - Deleting a conversation on both devices uses request and result messages over the authenticated `control` DataChannel. `features/conversations` waits for remote success before local deletion. The store removes messages, resources, and pairing state strictly, and never reports success after a cleanup failure.
 - User-facing copy belongs in `locales`. Business modules use translation keys.
@@ -92,10 +94,14 @@ index → app → plugins/routes/signaling
 
 - `app.ts` creates dependencies and registers plugins, routes, and signaling.
 - REST routes do not hold WebSocket runtime state.
+- `socket-utils.ts` provides the ordered, rate-limited signaling message queue; `signaling-retention.ts` owns consumption and release for both pairing and recovery. The room store exposes creation and generation-checked deletion, not unconditional overwrite or timestamp-based replacement.
+- Recovery registration travels in the first WebSocket message; the old REST endpoint delegates to the same registration function for compatibility. `recovery-coordinator.ts` assigns roles after device proof, promotes a surviving socket, and scopes signaling to a negotiation ID. Room IDs guard cleanup from deleting a newer rendezvous.
+- Startup, pairing-client replacement, and network return use cached address summaries instead of standalone STUN probes. Real connections collect ICE candidates normally; explicit refresh still probes.
+- Consumed signaling retains a 30-second fallback lease. Each client may confirm readiness after gathering finishes, the transport settles for 3 seconds, and a fresh P2P ping succeeds; both confirmations release the lease early and move subsequent signaling to the DataChannel.
 - The signaling module does not serve static files or regular HTTP routes.
 - `RoomStore` owns all short-lived state. Business modules must not create unbounded global maps.
 - REST write requests have separate rate limits for IP addresses and device identities. They also validate the browser Origin.
-- WebSocket connections have per-IP connection, concurrency, and per-connection message limits.
+- WebSocket connections have per-IP connection, concurrency, and per-connection message limits, plus a global 4,000-socket limit reserved before authentication or asynchronous work.
 - Turnstile protects code creation only after the soft threshold. Its secret stays on the server.
 - The server never handles message bodies or file contents.
 

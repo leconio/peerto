@@ -31,7 +31,6 @@ apps/web/src/
 │   ├── conversations/       左侧会话列表
 │   ├── messages/            消息流、回复、置顶与消息动作
 │   ├── resources/           本机资源预览、下载与删除
-│   ├── retry/               会话恢复与退避重试
 │   ├── security/            按需 Turnstile 验证
 │   ├── session/             多 Peer 客户端池、事件作用域与 UI 状态适配
 │   ├── settings/            设置界面
@@ -57,10 +56,13 @@ main → App → features/components
 
 - `App.tsx` 只装配状态、feature hooks 和页面区块，不定义大段 UI。
 - feature 内部可以依赖通用组件、服务、lib 和 store，但不能反向依赖 `App.tsx`。
+- 离线会话仅由用户点击触发连接，无 React 自动重试状态或全屏重试遮罩。
+- 已认证的旧传输可休眠保留 30 秒。点击重试先用唯一 nonce 探测上次路径，最多 1.5 秒；失败才关闭旧连接并重新 ICE。休眠会话不处理业务消息，也不自动变为在线。
 - WebRTC、WSS、ICE 和文件传输协议集中在 `services/peer`，React 组件不直接操作底层连接。
 - 每个已连接设备拥有独立 `PeerClient`。配对客户端与设备会话客户端分离，切换 UI 会话不会复用同一个连接。
-- 设备会话客户端数量默认上限为 4，可在本机配置为 1 至 32；达到上限时先回收最久未使用的离线客户端，再断开最久未使用且不是当前会话的在线客户端。进入已回收会话时按需重新创建。
-- 自定义 IP 仅保存在对应 `KnownPeer` 的本机状态中；`PeerClient` 在该设备的连接内禁用 ICE Server，并在浏览器端改写对端 host Candidate。
+- 设备会话客户端数量默认上限为 4，可在本机配置为 1 至 32；达到上限时先回收最久未使用的离线客户端，再断开最久未使用且不是当前会话的在线客户端。已回收会话在用户点击重试时重新创建。
+- `AppBootstrap` 在加载应用状态前检查必需的授权 Cookie；全新安装还必须先保存明确的本机名称，再创建设备身份。
+- 已选 ICE Candidate Pair 只保留在本机。直连时会话标题可展示清理后的远端 Candidate 地址；中继连接不会把 TURN 地址误显示为对方 IP。
 - ICE 设置把多条 TURN URL 组装为一个标准 `RTCIceServer`，共享一组用户名和密码；TURN 服务仍独立于应用部署。
 - 会话双端删除通过已认证的 `control` DataChannel 请求和结果消息协调。`features/conversations` 保证先等待远端成功，再提交本地删除；`store` 严格清理消息、资源与配对状态，清理失败不会报告删除成功。
 - 文案只放在 `locales`；业务模块使用翻译 key。
@@ -92,10 +94,14 @@ index → app → plugins/routes/signaling
 
 - `app.ts` 只创建依赖并注册插件、路由和信令。
 - REST 路由不维护 WebSocket 运行时状态。
+- `socket-utils.ts` 统一有序、限流的信令消息处理，`signaling-retention.ts` 统一首次配对和恢复会合的消费与释放。房间存储只提供创建和按代次校验删除，不再提供无条件覆盖或基于时间戳替换。
+- 恢复登记放入 WebSocket 首条消息；旧 REST 接口调用同一登记函数以兼容旧客户端。`recovery-coordinator.ts` 在设备证明完成后分配角色、提升仍存活的 Socket，并用协商 ID 隔离信令。房间 ID 防止旧清理误删新会合。
+- 启动、替换待配对客户端和恢复网络只展示缓存地址摘要，不单独探测 STUN。真实连接正常收集 ICE 候选，用户主动刷新仍可探测。
+- 已消费信令保留 30 秒兜底窗口。客户端在候选收集结束、连接稳定 3 秒且新的 P2P ping 成功后确认就绪；双方都确认后提前释放，后续信令转到 DataChannel。
 - 信令模块不承载静态资源和普通 HTTP 路由。
 - 所有短时状态由 `RoomStore` 管理；业务模块不能另建无上限的全局 Map。
 - REST 写请求按 IP 和设备身份分别限流，并校验浏览器 Origin。
-- WebSocket 按 IP 限制连接频率、并发数和单连接消息速率。
+- WebSocket 按 IP 限制连接频率、并发数和单连接消息速率，并在认证和异步操作之前预留全局名额，默认最多 4,000 条 Socket。
 - Turnstile 只保护超过软阈值的创建码请求；secret 只存在于服务端。
 - 服务端永远不接触消息正文和文件内容。
 

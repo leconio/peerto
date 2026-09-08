@@ -18,9 +18,10 @@ const device = {
 
 function room(code = "123456"): RoomRecord {
   return {
+    id: `room-${code}`,
     code,
     host: device,
-    hostIp: "127.0.0.1",
+
     hostTokenHash: "host-token-hash",
     shareTokenHash: "share-token-hash",
     resume: false,
@@ -55,6 +56,18 @@ function createStore(now: () => number, overrides = {}) {
 }
 
 describe("InMemoryRoomStore", () => {
+  it("does not let a previous room cleanup delete a new room with the same timestamp", async () => {
+    const store = createStore(() => 1_000);
+    try {
+      const previous = room();
+      await store.createRoom(previous, 60);
+      await store.deleteRoom(previous.code, previous.code, previous.id);
+      const next = { ...previous, id: "new-generation" };
+      await store.createRoom(next, 60);
+      await store.deleteRoom(previous.code, previous.code, previous.id);
+      expect(await store.getRoom(previous.code)).toEqual(next);
+    } finally { store.close(); }
+  });
   it("expires rooms, code registries, and rate buckets by TTL", async () => {
     let clock = 1_000;
     const store = createStore(() => clock);
@@ -158,29 +171,15 @@ describe("InMemoryRoomStore", () => {
     }
   });
 
-  it("replaces a room only when the observed generation still matches", async () => {
+  it("creates exactly one room for concurrent registrations", async () => {
     const store = createStore(() => 1_000);
-    const original = room();
-
     try {
-      await store.createRoom(original, 60);
-      expect(
-        await store.replaceRoom(
-          { ...original, createdAt: 2 },
-          60,
-          99,
-        ),
-      ).toBe(false);
-      expect(
-        await store.replaceRoom(
-          { ...original, createdAt: 2 },
-          60,
-          original.createdAt,
-        ),
-      ).toBe(true);
-      expect((await store.getRoom(original.code))?.createdAt).toBe(2);
-    } finally {
-      store.close();
-    }
+      const results = await Promise.all([
+        store.createRoom(room(), 60, "pair"),
+        store.createRoom({ ...room(), id: "contender" }, 60, "pair"),
+      ]);
+      expect(results).toEqual([true, false]);
+      expect((await store.getRoom("123456", "pair"))?.id).toBe(room().id);
+    } finally { store.close(); }
   });
 });

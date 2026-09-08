@@ -9,6 +9,7 @@ import {
 } from "@phosphor-icons/react";
 import type { DeviceIdentity } from "@peerto/protocol";
 import type { FormEvent } from "react";
+import { QRCodeSVG } from "qrcode.react";
 import { useTranslation } from "react-i18next";
 import styles from "../../styles/ui.module.css";
 import { Modal } from "../../components/Modal";
@@ -17,6 +18,7 @@ import type {
   RoomInfo,
 } from "../../services/peer";
 import type { KnownPeer } from "../../store";
+import { shareUrl } from "./share-link";
 
 export type ConnectionDialogKind = "host" | "join" | "auto" | null;
 
@@ -105,6 +107,13 @@ export function ConnectionDialogs({
                     })
                   : t("hostDialog.expired")}
               </div>
+              {room.shareToken && secondsRemaining > 0 && status === "waiting" && (
+                <div className={styles.roomQr}>
+                  <QRCodeSVG value={shareUrl(room)} size={208} level="M" marginSize={4}
+                    title={t("hostDialog.scanQr")} role="img" aria-label={t("hostDialog.scanQr")} />
+                  <p>{t("hostDialog.scanHint")}</p>
+                </div>
+              )}
               {room.shareToken && (
                 <div className={styles.shareActions}>
                   <button

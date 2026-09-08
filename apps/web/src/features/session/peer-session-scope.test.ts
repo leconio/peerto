@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  retryCanBeUpdatedByPeer,
   shouldOpenPeerConversation,
 } from "./peer-session-scope";
 
@@ -17,13 +16,4 @@ describe("multi-peer session scope", () => {
     ).toBe(true);
   });
 
-  it("keeps one peer from changing another peer's retry", () => {
-    const retry = {
-      peerId: "peer-b",
-      attempt: 2,
-      phase: "attempting" as const,
-    };
-    expect(retryCanBeUpdatedByPeer(retry, "peer-a")).toBe(false);
-    expect(retryCanBeUpdatedByPeer(retry, "peer-b")).toBe(true);
-  });
 });

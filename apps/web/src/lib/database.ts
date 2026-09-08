@@ -27,8 +27,14 @@ export async function readKeyPair(): Promise<CryptoKeyPair | undefined> {
   return (await getDatabase()).get("identity", "device-key-pair");
 }
 
-export async function writeKeyPair(keyPair: CryptoKeyPair): Promise<void> {
-  await (await getDatabase()).put("identity", keyPair, "device-key-pair");
+export async function storeKeyPairIfAbsent(keyPair: CryptoKeyPair): Promise<CryptoKeyPair> {
+  // One read/write transaction serializes first use across tabs. Generate keys
+  // before this transaction; awaiting WebCrypto inside it could auto-commit it.
+  const transaction = (await getDatabase()).transaction("identity", "readwrite");
+  const existing = await transaction.store.get("device-key-pair");
+  if (!existing) await transaction.store.put(keyPair, "device-key-pair");
+  await transaction.done;
+  return existing || keyPair;
 }
 
 export async function putFileHandle(

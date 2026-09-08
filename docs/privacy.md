@@ -4,6 +4,12 @@
 
 This page describes how a self-hosted Peerto deployment handles data in the browser, the Peerto application, and network helper services.
 
+## Storage authorization
+
+Before Peerto loads its application state, it asks the user to authorize one required first-party cookie and browser-local storage. Declining leaves the application unavailable. The cookie stores only the current consent version (`peerto_storage_consent=v1`), uses `SameSite=Strict`, and expires after one year. It is not used for advertising, analytics, or cross-site tracking.
+
+After authorization, a new installation asks for a local device name before creating its identity. Existing installations keep their saved name. PWA service-worker registration and offline caching also start only after authorization. The browser sends the consent cookie with same-site requests, but the application server does not use it for identity, signaling, or tracking.
+
 ## Browser-local data
 
 The current browser stores:
@@ -12,10 +18,13 @@ The current browser stores:
 - P-256 device private key
 - Public keys and recovery credentials for paired devices
 - Local messages, filenames, and transfer state
-- User-selected STUN, TURN, and custom IP settings
+- User-selected STUN and TURN settings
 - File handles and resource content in OPFS
+- PWA application files in browser Cache Storage
 
 This data does not synchronize to another browser automatically. Clearing site data removes the identity, pairings, and local history, so the devices must pair again.
+
+After a network/heartbeat failure, an authenticated connection may remain in memory for 30 idle seconds for an explicit retry to probe its previous path. It does not process application data or automatically return online while parked; browser ICE consent traffic may continue. The remote endpoint is not persisted as a reconnect cache, and reloading or cancelling closes the retained transport.
 
 TURN usernames and passwords are stored only in the current browser. A person or extension that can read that browser's site data may obtain them. Do not store private TURN credentials on a public device.
 
@@ -30,7 +39,7 @@ During connection setup, the application server handles:
 - SDP and ICE candidates
 - WebSocket state
 
-This information is used for authentication, rate limits, and WebRTC setup. Rooms have a short TTL and are released as soon as both devices are online over P2P. Restarting the application process also clears all rendezvous state.
+This information is used for authentication, rate limits, and WebRTC setup. Rooms have a short TTL. Once both devices are online, the joinable room is deleted immediately; authenticated sockets and minimal runtime state remain for at most 30 more seconds for stabilization, then are released. Restarting the application process also clears all rendezvous state.
 
 The application server does not receive or store:
 

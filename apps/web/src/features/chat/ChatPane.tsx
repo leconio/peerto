@@ -1,10 +1,10 @@
 import {
   ArrowBendUpLeft,
+  ArrowClockwise,
   ArrowLeft,
   CheckCircle,
   DotsThreeVertical,
   LinkSimple,
-  Network,
   PaperPlaneRight,
   Paperclip,
   ShieldCheck,
@@ -12,12 +12,16 @@ import {
   X,
 } from "@phosphor-icons/react";
 import type {
+  ClipboardEvent,
   KeyboardEvent,
   RefObject,
 } from "react";
 import { useTranslation } from "react-i18next";
 import { deviceAvatarLabel } from "../../lib/device-name";
 import styles from "../../styles/ui.module.css";
+import { connectionIsBusy } from "../../services/peer/connection-state";
+import type { ConnectionStatus, RuntimeCode } from "../../services/peer";
+import { runtimeKey } from "../../services/peer/runtime-key";
 import {
   SAVED_CONVERSATION_ID,
   type KnownPeer,
@@ -35,6 +39,11 @@ export interface ChatPaneProps {
   selectedMessages: StoredMessage[];
   ownDeviceId: string | undefined;
   onlineForSelection: boolean;
+  connectionStatus: ConnectionStatus;
+  connectionDetail: RuntimeCode;
+  retryAvailable: boolean;
+  onRetryConnection: () => void;
+  onCancelConnection: () => void;
   connectionRouteSummary: string;
   peerMenuOpen: boolean;
   peerMenuRef: RefObject<HTMLDivElement | null>;
@@ -48,19 +57,20 @@ export interface ChatPaneProps {
   inputRef: RefObject<HTMLTextAreaElement | null>;
   onBack: () => void;
   onTogglePeerMenu: () => void;
-  onConfigureCustomIp: () => void;
   onDeleteConversation: () => void;
   onOpenPinnedMessage: () => void;
   onTogglePin: (message: StoredMessage) => void;
   onDeleteMessage: (message: StoredMessage) => void;
   onOpenFile: (message: StoredMessage) => void;
   onStopFile: (message: StoredMessage) => void;
+  onCopyMessage: (message: StoredMessage) => void;
   onReply: (message: StoredMessage) => void;
   onJumpToMessage: (messageId: string) => void;
   onCancelReply: () => void;
   onSelectFile: () => void;
   onDraftChange: (value: string) => void;
   onComposerKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
+  onComposerPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void;
   onSend: () => void;
 }
 
@@ -71,6 +81,11 @@ export function ChatPane({
   selectedMessages,
   ownDeviceId,
   onlineForSelection,
+  connectionStatus,
+  connectionDetail,
+  retryAvailable,
+  onRetryConnection,
+  onCancelConnection,
   connectionRouteSummary,
   peerMenuOpen,
   peerMenuRef,
@@ -84,23 +99,25 @@ export function ChatPane({
   inputRef,
   onBack,
   onTogglePeerMenu,
-  onConfigureCustomIp,
   onDeleteConversation,
   onOpenPinnedMessage,
   onTogglePin,
   onDeleteMessage,
   onOpenFile,
   onStopFile,
+  onCopyMessage,
   onReply,
   onJumpToMessage,
   onCancelReply,
   onSelectFile,
   onDraftChange,
   onComposerKeyDown,
+  onComposerPaste,
   onSend,
 }: ChatPaneProps) {
   const { t } = useTranslation();
   const savedConversation = selectedId === SAVED_CONVERSATION_ID;
+  const connecting = connectionIsBusy(connectionStatus);
 
   return (
     <main
@@ -142,7 +159,9 @@ export function ChatPane({
               ? t("localMessageAndHandles")
               : onlineForSelection
                 ? connectionRouteSummary
-                : selectedPeer
+                : connecting
+                  ? t(`status.${connectionStatus}`)
+                  : selectedPeer
                   ? t("offlineWithId", {
                       id: shortId(selectedPeer.deviceId),
                     })
@@ -173,16 +192,6 @@ export function ChatPane({
                 role="menu"
                 aria-label={t("action.conversationMenu")}
               >
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={onConfigureCustomIp}
-                >
-                  <Network size={18} />
-                  {selectedPeer.customIp
-                    ? t("customIp.edit")
-                    : t("customIp.configure")}
-                </button>
                 <button
                   type="button"
                   role="menuitem"
@@ -275,6 +284,7 @@ export function ChatPane({
             canStopTransfer={onlineForSelection}
             onOpenFile={onOpenFile}
             onStopFile={onStopFile}
+            onCopyMessage={onCopyMessage}
             onReply={onReply}
             onTogglePin={onTogglePin}
             onDeleteMessage={onDeleteMessage}
@@ -284,6 +294,42 @@ export function ChatPane({
       </section>
 
       <footer className={styles.composer}>
+        {!savedConversation && !onlineForSelection ? (
+          <div className={styles.connectionComposer}>
+            {connecting ? (
+              <>
+                <div className={styles.connectionProgress} role="status">
+                  <ArrowClockwise size={21} className={styles.refreshingIcon} aria-hidden="true" />
+                  <span>
+                    <strong>{t("retry.connecting")}</strong>
+                    <small>{connectionDetail === "waitingForKnownPeer"
+                      ? t("retry.registered") : t(runtimeKey(connectionDetail))}</small>
+                  </span>
+                </div>
+                <button type="button" className={styles.secondaryButton} onClick={onCancelConnection}>
+                  {t("retry.cancel")}
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                className={styles.retryConnectionButton}
+                disabled={!selectedPeer || !retryAvailable || connectionStatus === "network_offline"}
+                onClick={onRetryConnection}
+              >
+                <ArrowClockwise size={22} aria-hidden="true" />
+                <span>
+                  <strong>{t("retry.retryNow")}</strong>
+                  <small>{connectionStatus === "network_offline"
+                    ? t("retry.networkOffline")
+                    : connectionStatus === "failed"
+                      ? t(runtimeKey(connectionDetail)) : t("retry.manualHint")}</small>
+                </span>
+              </button>
+            )}
+          </div>
+        ) : (
+        <>
         <button
           type="button"
           className={styles.iconButton}
@@ -334,6 +380,7 @@ export function ChatPane({
             disabled={!savedConversation && !onlineForSelection}
             onChange={(event) => onDraftChange(event.target.value)}
             onKeyDown={onComposerKeyDown}
+            onPaste={onComposerPaste}
           />
         </div>
         <button
@@ -348,6 +395,8 @@ export function ChatPane({
         >
           <PaperPlaneRight size={20} weight="fill" />
         </button>
+        </>
+        )}
       </footer>
     </main>
   );

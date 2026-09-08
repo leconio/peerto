@@ -9,14 +9,16 @@ Peerto sends messages and files directly between browsers with WebRTC DataChanne
 ## Features
 
 - Pair two devices with a short-lived 6-digit code
-- Connect from a share link without another approval step
-- Restore a verified device connection when its conversation is opened
+- Require local-storage authorization and a device name on first use
+- Connect from a share link or locally generated QR without another approval step
+- Restore a verified device connection by clicking Retry connection in its offline composer
 - Keep several peer connections active in one browser, with a default limit of 4
 - Send text, original images, video, and other files
+- Paste text, screenshots and multiple files; confirm attachments before serial sending
 - Reply to, pin, and delete messages you sent
 - Stream files in chunks into browser-local storage
 - Preview, download, and remove local resources
-- Configure multiple STUN URLs, multiple TURN URLs, relay-only mode, or a custom peer IP
+- Configure multiple STUN URLs, multiple TURN URLs, or relay-only mode
 - Install as a PWA on desktop or mobile
 - Use the interface in English or Chinese
 
@@ -26,7 +28,7 @@ Each conversation is still one-to-one. Peerto has no accounts, groups, cloud his
 
 Messages and pairing records stay in the current browser. IndexedDB stores the device key and file handles. Received file data is written to OPFS. The application server does not store message bodies or file contents.
 
-During connection setup, the server handles a code, device public keys, source IP addresses, SDP, and ICE candidates. This state is bounded and expires quickly. It is deleted once the peer connection is ready. See [Privacy](./docs/privacy.md) for the full boundary.
+During connection setup, the server handles a code, device public keys, source IP addresses, SDP, and ICE candidates. This state is bounded and expires quickly. Once the peer connection is ready, the joinable room is deleted immediately and authenticated signaling is released within 30 seconds. See [Privacy](./docs/privacy.md) for the full boundary.
 
 ## Run with Docker
 

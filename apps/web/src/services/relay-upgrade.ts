@@ -28,7 +28,6 @@ export interface RelayUpgradeState {
   role: "host" | "guest" | undefined;
   online: boolean;
   relayOnly: boolean;
-  customPeerIp?: string;
   route?: ConnectionRoute;
   iceServers: RTCIceServer[];
 }
@@ -40,7 +39,6 @@ export function shouldScheduleRelayUpgrade(
     state.role === "host" &&
     state.online &&
     !state.relayOnly &&
-    !state.customPeerIp &&
     state.route?.kind === "relay" &&
     hasTurnServer(state.iceServers)
   );

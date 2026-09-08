@@ -26,20 +26,13 @@ import {
 import { runtimeKey } from "../../services/peer/runtime-key";
 import { deleteCachedResourceFile } from "../../services/file-transfer";
 import { canPeerDeleteMessage } from "../messages/message-delete";
-import {
-  conversationRetryAfterConnectionDrop,
-  type ConversationRetryState,
-} from "../../services/conversation-retry";
 import type {
   KnownPeer,
   StoredFile,
   StoredMessage,
 } from "../../store";
 import { useAppStore } from "../../store";
-import {
-  retryCanBeUpdatedByPeer,
-  shouldOpenPeerConversation,
-} from "./peer-session-scope";
+import { shouldOpenPeerConversation } from "./peer-session-scope";
 
 type Setter<T> = Dispatch<SetStateAction<T>>;
 
@@ -55,10 +48,9 @@ export interface PeerCallbackBindings {
   setConnectionDialog: Setter<ConnectionDialogKind>;
   setRoom: Setter<RoomInfo | undefined>;
   setJoinRequest: Setter<DeviceIdentity | undefined>;
-  setConversationRetry: Setter<ConversationRetryState | undefined>;
   onPeerConnected?: (
     peer: DeviceIdentity,
-    automatic: boolean,
+    restored: boolean,
   ) => void;
   setSelectedId: Setter<string>;
   setMobileConversation: Setter<boolean>;
@@ -103,7 +95,6 @@ export function createPeerCallbacks(
     setConnectionDialog,
     setRoom,
     setJoinRequest,
-    setConversationRetry,
     onPeerConnected,
     setSelectedId,
     setMobileConversation,
@@ -126,54 +117,16 @@ export function createPeerCallbacks(
     onStatus: (nextStatus, detail) => {
       setStatus(nextStatus);
       setStatusDetail(detail || "ready");
+      if (!isPairingClient()) return;
       if (nextStatus === "online") {
-        if (isPairingClient()) {
-          setConnectionDialog(null);
-          setRoom(undefined);
-          setJoinRequest(undefined);
-        }
-        setConversationRetry((current) =>
-          current?.peerId === peerIdRef.current
-            ? undefined
-            : current,
-        );
+        setConnectionDialog(null);
+        setRoom(undefined);
+        setJoinRequest(undefined);
       } else if (
-        nextStatus === "waiting" &&
-        detail === "waitingForKnownPeer"
-      ) {
-        setConversationRetry((current) =>
-          current &&
-          current.peerId === peerIdRef.current &&
-          current.phase === "attempting"
-            ? {
-                peerId: current.peerId,
-                attempt: current.attempt,
-                phase: "registered",
-              }
-            : current,
-        );
-      } else if (
-        nextStatus === "offline" ||
-        nextStatus === "network_offline" ||
+        nextStatus === "offline" || nextStatus === "network_offline" ||
         nextStatus === "failed"
       ) {
-        if (isPairingClient()) setRoom(undefined);
-        const currentPeerId = peerIdRef.current;
-        setConversationRetry((current) => {
-          if (!retryCanBeUpdatedByPeer(current, currentPeerId)) {
-            return current;
-          }
-          return conversationRetryAfterConnectionDrop(current, {
-            activePeerId: currentPeerId,
-            selectedPeerId: selectedIdRef.current,
-            isKnownPeer:
-              currentPeerId !== undefined &&
-              peersRef.current.some(
-                (peer) => peer.deviceId === currentPeerId,
-              ),
-            networkAvailable: nextStatus !== "network_offline",
-          });
-        });
+        setRoom(undefined);
       }
     },
     onRoom: (nextRoom) => {
@@ -187,11 +140,11 @@ export function createPeerCallbacks(
     onJoinRequest: (device) => {
       if (isPairingClient()) setJoinRequest(device);
     },
-    onPeer: (peer, rendezvous, automatic) => {
+    onPeer: (peer, rendezvous, restored) => {
       const pairingConnection = isPairingClient();
       if (pairingConnection) sharedJoinHandledRef.current = false;
       peerIdRef.current = peer.deviceId;
-      onPeerConnected?.(peer, Boolean(automatic));
+      onPeerConnected?.(peer, Boolean(restored));
       if (pairingConnection) setConnectionDialog(null);
       upsertPeer(peer, rendezvous);
       if (
@@ -204,7 +157,7 @@ export function createPeerCallbacks(
         setSelectedId(peer.deviceId);
         setMobileConversation(true);
       }
-      if (!automatic && pairingConnection) {
+      if (!restored && pairingConnection) {
         setReplyingTo(undefined);
         setPinnedCursor(0);
       }

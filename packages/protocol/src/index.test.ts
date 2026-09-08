@@ -170,10 +170,10 @@ describe("protocol validation", () => {
     ).toBe(true);
   });
 
-  it("accepts a full peer reconnect request", () => {
+  it("rejects the retired uncoordinated reconnect request", () => {
     expect(
       rtcSignalSchema.safeParse({ kind: "reconnect_request" }).success,
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("uses only key material for the stable representation", () => {

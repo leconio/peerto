@@ -181,20 +181,22 @@ export function ConversationSidebar({
         <button
           type="button"
           className={styles.primaryButton}
+          aria-label={t("action.generateCode")}
           onClick={onCreateRoom}
           disabled={connectionActionsDisabled}
         >
           <Plus size={18} weight="bold" />
-          {t("action.generateCode")}
+          {t("action.generateCodeShort")}
         </button>
         <button
           type="button"
           className={styles.secondaryButton}
+          aria-label={t("action.enterCode")}
           onClick={onOpenJoin}
           disabled={connectionActionsDisabled}
         >
           <LinkSimple size={18} />
-          {t("action.enterCode")}
+          {t("action.enterCodeShort")}
         </button>
       </div>
     </aside>

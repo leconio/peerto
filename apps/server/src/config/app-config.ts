@@ -66,6 +66,7 @@ const envSchema = z.object({
     .min(1)
     .max(1_000)
     .default(12),
+  MAX_WS_CONNECTIONS: z.coerce.number().int().min(1).max(100_000).default(4_000),
   MAX_WS_MESSAGES_PER_MINUTE: z.coerce
     .number()
     .int()

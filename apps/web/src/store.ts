@@ -7,6 +7,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { deleteFileHandle } from "./lib/database";
 import { initialDeviceName } from "./lib/device-name";
+import { saveFirstDeviceName } from "./lib/first-use";
 import {
   deleteCachedResourceFile,
   deleteCachedResourceFileStrict,
@@ -44,10 +45,9 @@ export interface KnownPeer extends DeviceIdentity {
   lastConnectedAt: number;
   connectionCode?: string;
   connectionToken?: string;
-  customIp?: string;
 }
 
-interface AppState {
+export interface AppState {
   deviceName: string;
   theme: "light" | "dark" | "system";
   peers: KnownPeer[];
@@ -59,7 +59,6 @@ interface AppState {
     rendezvous?: RendezvousInfo,
   ) => void;
   removeConversation: (deviceId: string) => Promise<boolean>;
-  setPeerCustomIp: (deviceId: string, customIp?: string) => void;
   addMessage: (message: StoredMessage) => void;
   removeMessage: (id: string) => void;
   updateMessage: (
@@ -67,6 +66,15 @@ interface AppState {
     patch: Partial<Pick<StoredMessage, "status" | "file">>,
   ) => void;
   setMessagePinned: (id: string, pinnedAt: number | null) => void;
+}
+
+export function withoutLegacyCustomIps(
+  peers: Array<KnownPeer & { customIp?: unknown }>,
+): KnownPeer[] {
+  return peers.map((peer) => {
+    const { customIp: _legacyCustomIp, ...currentPeer } = peer;
+    return currentPeer;
+  });
 }
 
 function deleteStoredFileData(
@@ -90,7 +98,10 @@ export const useAppStore = create<AppState>()(
       theme: "system",
       peers: [],
       messages: [],
-      setDeviceName: (deviceName) => set({ deviceName }),
+      setDeviceName: (deviceName) => {
+        saveFirstDeviceName(localStorage, deviceName);
+        set({ deviceName });
+      },
       setTheme: (theme) => set({ theme }),
       upsertPeer: (peer, rendezvous) =>
         set((state) => ({
@@ -145,15 +156,6 @@ export const useAppStore = create<AppState>()(
           return false;
         }
       },
-      setPeerCustomIp: (deviceId, customIp) =>
-        set((state) => ({
-          peers: state.peers.map((peer) => {
-            if (peer.deviceId !== deviceId) return peer;
-            if (customIp) return { ...peer, customIp };
-            const { customIp: _customIp, ...withoutCustomIp } = peer;
-            return withoutCustomIp;
-          }),
-        })),
       addMessage: (message) => {
         let prunedHandleKeys: string[] = [];
         let prunedResourceKeys: string[] = [];
@@ -213,6 +215,27 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: "peerto-app-v3",
+      version: 1,
+      migrate: (persistedState) => {
+        const persisted = persistedState as Partial<AppState> & {
+          peers?: Array<KnownPeer & { customIp?: unknown }>;
+        };
+        return {
+          ...persisted,
+          ...(persisted.peers
+            ? { peers: withoutLegacyCustomIps(persisted.peers) }
+            : {}),
+        } as AppState;
+      },
+      merge: (persistedState, currentState) => {
+        const persisted = persistedState as Partial<AppState> & {
+          peers?: Array<KnownPeer & { customIp?: unknown }>;
+        };
+        const peers = withoutLegacyCustomIps(
+          persisted.peers || currentState.peers,
+        );
+        return { ...currentState, ...persisted, peers };
+      },
     },
   ),
 );

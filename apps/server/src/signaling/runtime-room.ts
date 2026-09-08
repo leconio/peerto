@@ -6,9 +6,12 @@ export interface ConnectedSocket {
   ip: string;
   isAlive: boolean;
   device?: DeviceIdentity;
+  signalingStable?: boolean;
 }
 
 export interface RuntimeRoom {
+  roomId: string;
+  sessionId?: string;
   roomKey: string;
   tokenHash: string;
   host: ConnectedSocket;

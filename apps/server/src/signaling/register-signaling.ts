@@ -1,5 +1,4 @@
 import {
-  clientWsMessageSchema,
   type DeviceIdentity,
 } from "@peerto/protocol";
 import type { FastifyInstance } from "fastify";
@@ -26,9 +25,13 @@ import {
   asString,
   closeSocket,
   closeWithMessage,
+  listenMessages,
   receiveSessionInit,
   send,
 } from "./socket-utils";
+import { consumeRoom, markSignalingStable, releaseRuntime } from "./signaling-retention";
+import { createRecoveryCoordinator } from "./recovery-coordinator";
+import { RecoveryRegistrationError, registerRecovery } from "./register-recovery";
 
 const RUNTIME_START_GRACE_MS = 5_000;
 
@@ -42,7 +45,10 @@ export function registerSignalingRoutes(
   app: FastifyInstance,
   { config, store, runtimeRooms }: SignalingRoutesOptions,
 ): void {
+  let hostSequence = 0;
+  const hostOrders = new WeakMap<WebSocket, number>();
   const activeConnectionsByIp = new Map<string, number>();
+  const activeSockets = new Set<WebSocket>();
   const messageRates = new WeakMap<
     WebSocket,
     { count: number; resetsAt: number }
@@ -76,6 +82,8 @@ export function registerSignalingRoutes(
     return false;
   };
 
+  const coordinateRecovery = createRecoveryCoordinator(store, runtimeRooms, config, acceptMessage);
+
   const signalingHeartbeat = setInterval(() => {
     for (const runtime of runtimeRooms.values()) {
       checkSocketHeartbeat(runtime.host);
@@ -85,49 +93,28 @@ export function registerSignalingRoutes(
   signalingHeartbeat.unref();
 
   const endRoom = async (
-    roomKey: string,
+    runtime: RuntimeRoom,
     code: string,
-    reason: "expired" | "host_offline" | "ip_changed" | "replaced",
+    reason: "expired" | "host_offline",
   ): Promise<void> => {
-    const runtime = runtimeRooms.get(roomKey);
-    if (runtime) {
-      clearTimeout(runtime.expiryTimer);
-      send(runtime.host.socket, { type: "room_closed", reason });
-      if (runtime.guest) {
-        send(runtime.guest.socket, { type: "room_closed", reason });
-        closeSocket(runtime.guest.socket);
-      }
-      closeSocket(runtime.host.socket);
-      runtimeRooms.delete(roomKey);
+    const { roomKey } = runtime;
+    if (runtimeRooms.get(roomKey) !== runtime) return;
+    if (runtime.consumed) {
+      // Never delete a newer rendezvous that reuses a consumed room key.
+      releaseRuntime(runtimeRooms, runtime);
+      return;
     }
-    await store.deleteRoom(code, roomKey);
-    const tokenHash = runtime?.tokenHash;
+    send(runtime.host.socket, { type: "room_closed", reason });
+    if (runtime.guest) send(runtime.guest.socket, { type: "room_closed", reason });
+    releaseRuntime(runtimeRooms, runtime);
+    await store.deleteRoom(code, roomKey, runtime.roomId);
+    const tokenHash = runtime.tokenHash;
     const codeRecord = tokenHash
       ? await store.getCode(code, tokenHash)
       : null;
     if (codeRecord && Object.keys(codeRecord.members).length < 2) {
       await store.deleteCode(code, tokenHash!);
     }
-  };
-
-  const consumeRoom = (code: string, runtime: RuntimeRoom): void => {
-    if (
-      runtime.consumed ||
-      !runtime.hostConnected ||
-      !runtime.guestConnected
-    ) {
-      return;
-    }
-    runtime.consumed = true;
-    clearTimeout(runtime.expiryTimer);
-    void store.deleteRoom(code, runtime.roomKey);
-    send(runtime.host.socket, { type: "room_consumed" });
-    if (runtime.guest) {
-      send(runtime.guest.socket, { type: "room_consumed" });
-    }
-    runtimeRooms.delete(runtime.roomKey);
-    closeSocket(runtime.host.socket);
-    if (runtime.guest) closeSocket(runtime.guest.socket);
   };
 
   const waitForRuntime = async (
@@ -150,7 +137,8 @@ export function registerSignalingRoutes(
     room: RoomRecord,
     runtime: RuntimeRoom,
     guest: ConnectedSocket & { device: DeviceIdentity },
-  ): Promise<boolean> => {
+  ): Promise<void> => {
+    if (runtime.accepted) return;
     const registered = await store.upsertCodeMember(
       code,
       runtime.tokenHash,
@@ -161,7 +149,18 @@ export function registerSignalingRoutes(
       config.ROOM_TTL_SECONDS,
       config.MAX_CODE_MEMBERS,
     );
-    if (!registered) return false;
+    if (runtimeRooms.get(runtime.roomKey) !== runtime || runtime.guest !== guest ||
+        runtime.consumed || runtime.accepted || guest.socket.readyState !== WebSocket.OPEN ||
+        runtime.host.socket.readyState !== WebSocket.OPEN) return;
+    if (!registered) {
+      runtime.guest = undefined;
+      closeWithMessage(guest.socket, { type: "error", code: "CODE_MEMBER_LIMIT", message: "配对成员数量已达上限" });
+      return;
+    }
+    runtime.accepted = true;
+    runtime.hostConnected = false;
+    runtime.guestConnected = false;
+    runtime.guestIp = guest.ip;
     const hostDevice = runtime.host.device || room.host;
     send(runtime.host.socket, {
       type: "peer_accepted",
@@ -181,13 +180,19 @@ export function registerSignalingRoutes(
         role: "guest",
       },
     });
-    return true;
   };
 
   app.get(
     "/ws",
     { websocket: true },
     async (socket, request) => {
+      // Reserve before any await, including authentication and rate checks.
+      if (activeSockets.size >= config.MAX_WS_CONNECTIONS) {
+        socket.terminate();
+        return;
+      }
+      activeSockets.add(socket);
+      socket.once("close", () => activeSockets.delete(socket));
       const sessionInitPromise = receiveSessionInit(socket);
       const query = request.query as Record<string, unknown>;
       const role = asString(query.role);
@@ -241,6 +246,7 @@ export function registerSignalingRoutes(
         return;
       }
 
+      if (socket.readyState !== WebSocket.OPEN) return;
       const activeConnections =
         activeConnectionsByIp.get(request.ip) || 0;
       if (activeConnections >= config.MAX_WS_CONNECTIONS_PER_IP) {
@@ -272,6 +278,26 @@ export function registerSignalingRoutes(
       const suppliedDeviceId = sessionInit.deviceId;
       const suppliedPeerDeviceId = sessionInit.peerDeviceId;
 
+      if (sessionInit.recoveryDevice) {
+        if (!suppliedConnectionToken || !suppliedPeerDeviceId ||
+            suppliedDeviceId !== sessionInit.recoveryDevice.deviceId) {
+          closeWithMessage(socket, { type: "error", code: "INVALID_QUERY", message: "配对信息无效" });
+          return;
+        }
+        try {
+          const { roomKey, room } = await registerRecovery(store, config, {
+            code, device: sessionInit.recoveryDevice, peerDeviceId: suppliedPeerDeviceId,
+            connectionToken: suppliedConnectionToken,
+          }, request.ip);
+          if (socket.readyState === WebSocket.OPEN) coordinateRecovery(socket, request.ip, roomKey, room, sessionInit);
+        } catch (error) {
+          closeWithMessage(socket, { type: "error",
+            code: error instanceof RecoveryRegistrationError ? error.code : "SIGNALING_UNAVAILABLE",
+            message: error instanceof RecoveryRegistrationError ? error.message : "信令暂时不可用" });
+        }
+        return;
+      }
+
       const namespacedRoomKey =
         suppliedConnectionToken &&
         suppliedDeviceId &&
@@ -294,7 +320,12 @@ export function registerSignalingRoutes(
           type: "room_closed",
           reason: room ? "expired" : "invalid_code",
         });
-        if (room) await store.deleteRoom(code, roomKey);
+        if (room) await store.deleteRoom(code, roomKey, room.id);
+        return;
+      }
+
+      if (room.resume) {
+        coordinateRecovery(socket, request.ip, roomKey, room, sessionInit);
         return;
       }
 
@@ -315,20 +346,14 @@ export function registerSignalingRoutes(
         const codeRecord = connectionToken
           ? await store.getCode(code, connectionTokenHash)
           : null;
-        const runtimeConnectionToken = room.resume
-          ? token
-          : connectionToken;
+        const runtimeConnectionToken = connectionToken;
         if (
           !codeRecord ||
           !runtimeConnectionToken ||
           !safeTokenEqual(
             runtimeConnectionToken,
             codeRecord.tokenHash,
-          ) ||
-          (room.resume &&
-            (!codeRecord.members[room.host.deviceId] ||
-              suppliedDeviceId !== room.host.deviceId ||
-              suppliedPeerDeviceId !== room.peerDeviceId))
+          )
         ) {
           closeWithMessage(socket, {
             type: "error",
@@ -337,29 +362,16 @@ export function registerSignalingRoutes(
           });
           return;
         }
-        if (request.ip !== room.hostIp) {
-          await store.deleteRoom(code, roomKey);
-          closeWithMessage(socket, {
-            type: "room_closed",
-            reason: "ip_changed",
-          });
-          return;
-        }
+        // Source IP is rate-limited, not identity. The host must still prove
+        // its device key below after presenting the room/member credential.
 
-        const existing = runtimeRooms.get(roomKey);
-        if (existing) {
-          clearTimeout(existing.expiryTimer);
-          send(existing.host.socket, {
-            type: "room_closed",
-            reason: "replaced",
-          });
-          closeSocket(existing.host.socket);
-          if (existing.guest) closeSocket(existing.guest.socket);
-        }
-
-        const expiryTimer = setTimeout(() => {
-          void endRoom(roomKey, code, "expired");
-        }, Math.max(1, room.expiresAt - Date.now()));
+        const order = ++hostSequence;
+        hostOrders.set(socket, order);
+        // An unproven socket owns only its own authentication deadline.
+        const expiryTimer = setTimeout(() => closeWithMessage(socket, {
+          type: "error", code: "DEVICE_PROOF_TIMEOUT", message: "设备验证超时",
+        }), Math.max(1, Math.min(10_000, room.expiresAt - Date.now())));
+        expiryTimer.unref();
         const hostChallenge = createChallenge();
         const hostConnection: ConnectedSocket = {
           socket,
@@ -371,6 +383,7 @@ export function registerSignalingRoutes(
           hostConnection.isAlive = true;
         });
         const runtime: RuntimeRoom = {
+          roomId: room.id,
           roomKey,
           tokenHash: codeRecord.tokenHash,
           host: hostConnection,
@@ -385,167 +398,157 @@ export function registerSignalingRoutes(
           expiresAt: room.expiresAt,
           expiryTimer,
         };
-        runtimeRooms.set(roomKey, runtime);
         send(socket, {
           type: "challenge",
           challenge: hostChallenge,
         });
 
-        socket.on("message", (raw) => {
-          void (async () => {
-            if (!acceptMessage(socket)) return;
-            let json: unknown;
-            try {
-              json = JSON.parse(raw.toString());
-            } catch {
-              send(socket, {
-                type: "error",
-                code: "INVALID_JSON",
-                message: "信令消息不是有效 JSON",
-              });
-              return;
-            }
-            const parsed = clientWsMessageSchema.safeParse(json);
-            if (!parsed.success) {
-              send(socket, {
-                type: "error",
-                code: "INVALID_MESSAGE",
-                message: "信令消息格式无效",
-              });
-              return;
-            }
-            const current = runtimeRooms.get(roomKey);
-            if (!current || current.host.socket !== socket) return;
-            const message = parsed.data;
-
+        listenMessages(socket, acceptMessage, async message => {
+          if (message.type === "authenticate" && !runtime.hostAuthenticated) {
             if (
-              message.type === "authenticate" &&
-              !current.hostAuthenticated
+              message.device.deviceId !== room.host.deviceId ||
+              !verifyDeviceIdentity(message.device) ||
+              !verifyChallenge(
+                message.device,
+                code,
+                hostChallenge,
+                message.signature,
+              )
             ) {
-              if (
-                message.device.deviceId !== room.host.deviceId ||
-                !verifyDeviceIdentity(message.device) ||
-                !verifyChallenge(
-                  message.device,
-                  code,
-                  hostChallenge,
-                  message.signature,
-                )
-              ) {
-                closeWithMessage(socket, {
-                  type: "error",
-                  code: "DEVICE_PROOF_FAILED",
-                  message: "主机设备身份签名验证失败",
-                });
-                return;
-              }
-              current.host.device = message.device;
-              current.hostAuthenticated = true;
-              const registered = await store.upsertCodeMember(
-                code,
-                current.tokenHash,
-                {
-                  device: message.device,
-                  updatedAt: Date.now(),
-                },
-                config.ROOM_TTL_SECONDS,
-                config.MAX_CODE_MEMBERS,
-              );
-              if (!registered) {
-                closeWithMessage(socket, {
-                  type: "error",
-                  code: "CODE_MEMBER_LIMIT",
-                  message: "此配对凭证登记的设备数量已达到上限",
-                });
-                return;
-              }
-              send(socket, {
-                type: "room_ready",
-                code,
-                expiresAt: room.expiresAt,
-              });
-              return;
-            }
-
-            if (!current.hostAuthenticated) {
-              send(socket, {
+              closeWithMessage(socket, {
                 type: "error",
-                code: "NOT_AUTHENTICATED",
-                message: "主机设备尚未通过身份验证",
+                code: "DEVICE_PROOF_FAILED",
+                message: "主机设备身份签名验证失败",
               });
               return;
             }
-
-            if (
-              message.type === "accept_peer" &&
-              current.guest?.device?.deviceId === message.deviceId
-            ) {
-              current.accepted = true;
-              current.hostConnected = false;
-              current.guestConnected = false;
-              current.guestIp = current.guest.ip;
-              const registered = await acceptRuntimeMember(
-                code,
-                room,
-                current,
-                current.guest as ConnectedSocket & {
-                  device: DeviceIdentity;
-                },
-              );
-              if (!registered) {
-                current.accepted = false;
-                closeWithMessage(current.guest.socket, {
-                  type: "error",
-                  code: "CODE_MEMBER_LIMIT",
-                  message: "此配对凭证登记的设备数量已达到上限",
-                });
-                current.guest = undefined;
-              }
-            } else if (
-              message.type === "reject_peer" &&
-              current.guest?.device?.deviceId === message.deviceId
-            ) {
-              send(current.guest.socket, { type: "peer_rejected" });
-              closeSocket(current.guest.socket);
-              current.guest = undefined;
-              current.accepted = false;
-              current.hostConnected = false;
-              current.guestConnected = false;
-            } else if (
-              message.type === "signal" &&
-              current.accepted &&
-              current.guest
-            ) {
-              send(current.guest.socket, message);
-            } else if (
-              message.type === "connected" &&
-              current.accepted
-            ) {
-              current.hostConnected = true;
-              consumeRoom(code, current);
+            const registered = await store.upsertCodeMember(
+              code,
+              runtime.tokenHash,
+              {
+                device: message.device,
+                updatedAt: Date.now(),
+              },
+              config.ROOM_TTL_SECONDS,
+              config.MAX_CODE_MEMBERS,
+            );
+            if (!registered) {
+              closeWithMessage(socket, {
+                type: "error",
+                code: "CODE_MEMBER_LIMIT",
+                message: "此配对凭证登记的设备数量已达到上限",
+              });
+              return;
             }
-          })();
+            const latestRoom = await store.getRoom(code, roomKey);
+            if (socket.readyState !== WebSocket.OPEN) return;
+            if (latestRoom?.id !== room.id || room.expiresAt <= Date.now()) {
+              closeWithMessage(socket, { type: "room_closed", reason: "expired" });
+              return;
+            }
+            const existing = runtimeRooms.get(roomKey);
+            if (existing?.consumed || (existing && (hostOrders.get(existing.host.socket) || 0) > order)) {
+              closeWithMessage(socket, { type: "room_closed", reason: "replaced" });
+              return;
+            }
+            if (existing) {
+              send(existing.host.socket, { type: "room_closed", reason: "replaced" });
+              releaseRuntime(runtimeRooms, existing);
+            }
+            runtime.host.device = message.device;
+            runtime.hostAuthenticated = true;
+            clearTimeout(runtime.expiryTimer);
+            runtime.expiryTimer = setTimeout(() => {
+              void endRoom(runtime, code, "expired");
+            }, Math.max(1, room.expiresAt - Date.now()));
+            runtime.expiryTimer.unref();
+            runtimeRooms.set(roomKey, runtime);
+            send(socket, {
+              type: "room_ready",
+              code,
+              expiresAt: room.expiresAt,
+            });
+            return;
+          }
+
+          if (!runtime.hostAuthenticated) {
+            send(socket, {
+              type: "error",
+              code: "NOT_AUTHENTICATED",
+              message: "主机设备尚未通过身份验证",
+            });
+            return;
+          }
+
+          const current = runtimeRooms.get(roomKey);
+          if (current !== runtime || current.host.socket !== socket) return;
+          if (
+            current.consumed &&
+            message.type !== "signal" &&
+            message.type !== "signaling_stable" &&
+            message.type !== "connected"
+          ) return;
+
+          if (message.type === "signaling_stable") {
+            markSignalingStable(runtimeRooms, current, current.host);
+          } else if (
+            message.type === "accept_peer" &&
+            current.guest?.device?.deviceId === message.deviceId
+          ) {
+            await acceptRuntimeMember(code, room, current, current.guest as ConnectedSocket & { device: DeviceIdentity });
+          } else if (
+            message.type === "reject_peer" &&
+            current.guest?.device?.deviceId === message.deviceId
+          ) {
+            send(current.guest.socket, { type: "peer_rejected" });
+            closeSocket(current.guest.socket);
+            current.guest = undefined;
+            current.accepted = false;
+            current.hostConnected = false;
+            current.guestConnected = false;
+          } else if (
+            message.type === "signal" &&
+            current.accepted &&
+            current.guest
+          ) {
+            send(current.guest.socket, message);
+          } else if (
+            message.type === "connected" &&
+            current.accepted
+          ) {
+            current.hostConnected = true;
+            consumeRoom(store, runtimeRooms, code, current);
+          }
         });
 
         socket.on("close", () => {
-          const current = runtimeRooms.get(roomKey);
-          if (current?.host.socket === socket) {
-            void endRoom(roomKey, code, "host_offline");
-          }
+        clearTimeout(runtime.expiryTimer);
+        const current = runtimeRooms.get(roomKey);
+        if (current?.host.socket === socket) {
+          void endRoom(current, code, "host_offline");
+        }
         });
         return;
       }
 
       const runtime = await waitForRuntime(roomKey);
-      if (!runtime || runtime.host.socket.readyState !== WebSocket.OPEN) {
+      if (socket.readyState !== WebSocket.OPEN) return;
+      if (
+        !runtime || runtime.consumed ||
+        runtime.host.socket.readyState !== WebSocket.OPEN
+      ) {
         closeWithMessage(socket, {
-          type: "room_closed",
-          reason: "host_offline",
+        type: "room_closed",
+        reason: "host_offline",
         });
         return;
       }
 
       const challenge = createChallenge();
+      const authTimer = setTimeout(() => closeWithMessage(socket, {
+        type: "error", code: "DEVICE_PROOF_TIMEOUT", message: "设备验证超时",
+      }), Math.max(1, Math.min(10_000, room.expiresAt - Date.now())));
+      authTimer.unref();
       const guest: ConnectedSocket = {
         socket,
         ip: request.ip,
@@ -556,37 +559,17 @@ export function registerSignalingRoutes(
       });
       send(socket, { type: "challenge", challenge });
 
-      socket.on("message", (raw) => {
-        void (async () => {
-          if (!acceptMessage(socket)) return;
-          let json: unknown;
-          try {
-            json = JSON.parse(raw.toString());
-          } catch {
-            send(socket, {
-              type: "error",
-              code: "INVALID_JSON",
-              message: "信令消息不是有效 JSON",
-            });
-            return;
-          }
-          const parsed = clientWsMessageSchema.safeParse(json);
-          if (!parsed.success) {
-            send(socket, {
-              type: "error",
-              code: "INVALID_MESSAGE",
-              message: "信令消息格式无效",
-            });
-            return;
-          }
-          const current = runtimeRooms.get(roomKey);
-          if (!current) return;
-          const message = parsed.data;
+      listenMessages(socket, acceptMessage, async message => {
+        const current = runtimeRooms.get(roomKey);
+          if (current !== runtime || current.roomId !== room.id) return;
 
           if (message.type === "authenticate" && !guest.device) {
+            if (current.consumed) {
+              closeWithMessage(socket, { type: "room_closed", reason: "invalid_code" });
+              return;
+            }
             const device = message.device;
             const shareAuthorized =
-              !room.resume &&
               message.shareToken !== undefined &&
               safeTokenEqual(message.shareToken, room.shareTokenHash);
             const memberTokenHash = message.connectionToken
@@ -595,6 +578,11 @@ export function registerSignalingRoutes(
             const codeRecord = message.connectionToken
               ? await store.getCode(code, memberTokenHash)
               : null;
+            if (runtimeRooms.get(roomKey) !== current || socket.readyState !== WebSocket.OPEN ||
+                current.consumed || current.host.socket.readyState !== WebSocket.OPEN) {
+              closeWithMessage(socket, { type: "room_closed", reason: "invalid_code" });
+              return;
+            }
             const memberAuthorized =
               message.connectionToken !== undefined &&
               codeRecord !== null &&
@@ -603,11 +591,7 @@ export function registerSignalingRoutes(
                 codeRecord.tokenHash,
               ) &&
               Boolean(codeRecord.members[device.deviceId]) &&
-              Boolean(codeRecord.members[room.host.deviceId]) &&
-              (!room.resume ||
-                (device.deviceId === room.peerDeviceId &&
-                  suppliedDeviceId === device.deviceId &&
-                  suppliedPeerDeviceId === room.host.deviceId));
+              Boolean(codeRecord.members[room.host.deviceId]);
             if (
               !verifyDeviceIdentity(device) ||
               !verifyChallenge(
@@ -633,9 +617,7 @@ export function registerSignalingRoutes(
               return;
             }
             if (
-              (message.connectionToken !== undefined &&
-                !memberAuthorized) ||
-              (room.resume && !memberAuthorized)
+              message.connectionToken !== undefined && !memberAuthorized
             ) {
               closeWithMessage(socket, {
                 type: "error",
@@ -644,11 +626,18 @@ export function registerSignalingRoutes(
               });
               return;
             }
-            if (current.guestIp && current.guestIp !== request.ip) {
-              void endRoom(roomKey, code, "ip_changed");
+            if (
+              current.guestIp && current.guestIp !== request.ip &&
+              !memberAuthorized
+            ) {
+              closeWithMessage(socket, { type: "room_closed", reason: "ip_changed" });
               return;
             }
 
+            if (current.accepted) {
+              closeWithMessage(socket, { type: "error", code: "ROOM_OCCUPIED", message: "此连接码已在建立连接" });
+              return;
+            }
             if (current.guest) {
               send(current.guest.socket, {
                 type: "room_closed",
@@ -657,29 +646,14 @@ export function registerSignalingRoutes(
               closeSocket(current.guest.socket);
             }
             guest.device = device;
+            clearTimeout(authTimer);
             current.guest = guest;
             current.accepted = false;
             current.hostConnected = false;
             current.guestConnected = false;
 
             if (shareAuthorized || memberAuthorized) {
-              current.accepted = true;
-              current.guestIp = guest.ip;
-              const registered = await acceptRuntimeMember(
-                code,
-                room,
-                current,
-                guest as ConnectedSocket & { device: DeviceIdentity },
-              );
-              if (!registered) {
-                current.accepted = false;
-                closeWithMessage(guest.socket, {
-                  type: "error",
-                  code: "CODE_MEMBER_LIMIT",
-                  message: "此配对凭证登记的设备数量已达到上限",
-                });
-                current.guest = undefined;
-              }
+              await acceptRuntimeMember(code, room, current, guest as ConnectedSocket & { device: DeviceIdentity });
             } else {
               send(current.host.socket, {
                 type: "join_request",
@@ -698,21 +672,27 @@ export function registerSignalingRoutes(
             return;
           }
 
-          if (message.type === "signal" && current.accepted) {
+          if (message.type === "signaling_stable") {
+            markSignalingStable(runtimeRooms, current, guest);
+          } else if (message.type === "signal" && current.accepted) {
             send(current.host.socket, message);
           } else if (
             message.type === "connected" &&
             current.accepted
           ) {
             current.guestConnected = true;
-            consumeRoom(code, current);
+            consumeRoom(store, runtimeRooms, code, current);
           }
-        })();
       });
 
       socket.on("close", () => {
+        clearTimeout(authTimer);
         const current = runtimeRooms.get(roomKey);
         if (current?.guest?.socket === socket) {
+          if (current.consumed) {
+            releaseRuntime(runtimeRooms, current);
+            return;
+          }
           current.guest = undefined;
           current.accepted = false;
           current.hostConnected = false;

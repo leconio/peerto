@@ -9,13 +9,21 @@ export function sharedJoinFromLocation(): PendingSharedJoin | undefined {
   const url = new URL(window.location.href);
   const code = url.searchParams.get("join") || "";
   const token = new URLSearchParams(url.hash.slice(1)).get("token") || "";
-  if (url.searchParams.has("join") || url.hash) {
-    url.searchParams.delete("join");
-    url.hash = "";
-    window.history.replaceState(null, "", `${url.pathname}${url.search}`);
-  }
-  if (!/^\d{6}$/.test(code) || token.length < 32) return undefined;
+  // This is read during React render (including StrictMode replays). Keep it
+  // pure; onboarding/reloads must not lose an invitation before identity loads.
+  if (!/^\d{6}$/.test(code) || !/^[A-Za-z0-9_-]{32,256}$/.test(token)) return undefined;
   return { code, token };
+}
+
+export function consumeSharedJoin(pending: PendingSharedJoin): void {
+  const current = sharedJoinFromLocation();
+  if (current?.code !== pending.code || current.token !== pending.token) return;
+  const url = new URL(window.location.href);
+  url.searchParams.delete("join");
+  const fragment = new URLSearchParams(url.hash.slice(1));
+  fragment.delete("token");
+  url.hash = fragment.toString();
+  window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
 }
 
 export function shareUrl(room: RoomInfo): string {

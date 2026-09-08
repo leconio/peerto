@@ -21,6 +21,7 @@ import {
   identityDeviceName,
   shouldUseIdentityDeviceName,
 } from "../../lib/device-name";
+import { loadFirstDeviceName } from "../../lib/first-use";
 import { loadIdentity, type LocalIdentity } from "../../lib/identity";
 import type { ConnectionRoute } from "../../lib/network";
 import { normalizeMaxActivePeerClients } from "../../lib/peer-client-settings";
@@ -36,7 +37,6 @@ import {
   type RoomInfo,
   type RuntimeCode,
 } from "../../services/peer";
-import type { ConversationRetryState } from "../../services/conversation-retry";
 import type {
   KnownPeer,
   StoredMessage,
@@ -68,7 +68,6 @@ export interface PeerClientManagerBindings {
   setConnectionDialog: Setter<ConnectionDialogKind>;
   setRoom: Setter<RoomInfo | undefined>;
   setJoinRequest: Setter<DeviceIdentity | undefined>;
-  setConversationRetry: Setter<ConversationRetryState | undefined>;
   setSelectedId: Setter<string>;
   setMobileConversation: Setter<boolean>;
   setReplyingTo: Setter<StoredMessage | undefined>;
@@ -107,7 +106,6 @@ export function usePeerClientManager({
   setConnectionDialog,
   setRoom,
   setJoinRequest,
-  setConversationRetry,
   setSelectedId,
   setMobileConversation,
   setReplyingTo,
@@ -136,6 +134,7 @@ export function usePeerClientManager({
   );
   const clientRef = useRef<PeerClient | undefined>(undefined);
   const peerClientsRef = useRef(new Map<string, PeerClient>());
+  const createdClientsRef = useRef(new Set<PeerClient>());
   const iceConnectionConfigRef = useRef<{
     iceServers: RTCIceServer[];
     relayOnly: boolean;
@@ -164,7 +163,9 @@ export function usePeerClientManager({
       );
       if (prunedPeerIds.length === 0) return;
       for (const peerId of prunedPeerIds) {
-        peerClientsRef.current.get(peerId)?.disconnect(false);
+        const prunedClient = peerClientsRef.current.get(peerId);
+        prunedClient?.disconnect(false);
+        if (prunedClient) createdClientsRef.current.delete(prunedClient);
         peerClientsRef.current.delete(peerId);
       }
       setPeerClientsVersion((version) => version + 1);
@@ -188,16 +189,19 @@ export function usePeerClientManager({
 
   useEffect(() => {
     let disposed = false;
-    const createdClients = new Set<PeerClient>();
+    const createdClients = createdClientsRef.current;
 
     const initialDeviceName = initialDeviceNameRef.current;
+    const explicitlyNamed = Boolean(loadFirstDeviceName(localStorage));
     void Promise.all([loadIdentity(initialDeviceName), loadApiConfig()])
       .then(([loadedIdentity, config]) => {
         if (disposed) return;
-        const resolvedDeviceName = shouldUseIdentityDeviceName(
-          initialDeviceName,
-          navigator.platform,
-        )
+        const resolvedDeviceName =
+          !explicitlyNamed &&
+          shouldUseIdentityDeviceName(
+            initialDeviceName,
+            navigator.platform,
+          )
           ? identityDeviceName(loadedIdentity.device.deviceId)
           : initialDeviceName;
         const resolvedIdentity: LocalIdentity = {
@@ -355,7 +359,6 @@ export function usePeerClientManager({
               setConnectionDialog,
               setRoom,
               setJoinRequest,
-              setConversationRetry,
               onPeerConnected: (peer) => {
                 if (!managedClient) return;
                 const existing = peerClientsRef.current.get(
@@ -363,6 +366,7 @@ export function usePeerClientManager({
                 );
                 if (existing && existing !== managedClient) {
                   existing.disconnect(false);
+                  createdClients.delete(existing);
                 }
                 peerIdRef.current = peer.deviceId;
                 peerClientsRef.current.delete(peer.deviceId);
@@ -387,11 +391,7 @@ export function usePeerClientManager({
                   setStatusDetail(
                     navigator.onLine ? "ready" : "networkOffline",
                   );
-                  if (navigator.onLine) {
-                    void replacement
-                      .probePublicAddresses()
-                      .catch(() => setIpProbing(false));
-                  }
+                  setIpProbing(false);
                 }
               },
               setSelectedId,
@@ -441,11 +441,8 @@ export function usePeerClientManager({
         setClient(currentClient);
         if (!navigator.onLine) {
           currentClient.setNetworkAvailable(false);
-        } else {
-          void currentClient
-            .probePublicAddresses()
-            .catch(() => setIpProbing(false));
         }
+        setIpProbing(false);
       })
       .catch(() => {
         setNotice({ key: "error.APP_INITIALIZATION_FAILED" });
@@ -461,6 +458,7 @@ export function usePeerClientManager({
         createdClient.disconnect(false);
       }
       peerClientsRef.current.clear();
+      createdClients.clear();
     };
   }, [
     addMessage,
@@ -507,7 +505,9 @@ export function usePeerClientManager({
     peerClientsRef.current.set(peerId, peerClient);
   }, []);
   const removePeerClient = useCallback((peerId: string) => {
-    peerClientsRef.current.get(peerId)?.disconnect(false);
+    const removedClient = peerClientsRef.current.get(peerId);
+    removedClient?.disconnect(false);
+    if (removedClient) createdClientsRef.current.delete(removedClient);
     peerClientsRef.current.delete(peerId);
     setPeerClientsVersion((version) => version + 1);
     setPeerRuntimes((current) => {
@@ -558,8 +558,6 @@ export function usePeerClientManager({
   usePeerNetworkEvents(
     client,
     peerClientsRef,
-    selectedIdRef,
-    setConversationRetry,
   );
 
   const onlinePeerIds = new Set(

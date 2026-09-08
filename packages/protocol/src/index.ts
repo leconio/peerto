@@ -83,9 +83,6 @@ export const rtcSignalSchema = z.union([
   z.object({
     kind: z.literal("restart_request"),
   }),
-  z.object({
-    kind: z.literal("reconnect_request"),
-  }),
 ]);
 
 export type RtcSignal = z.infer<typeof rtcSignalSchema>;
@@ -96,6 +93,7 @@ export const wsSessionInitSchema = z.object({
   connectionToken: z.string().min(32).max(256).optional(),
   deviceId: z.string().min(20).max(128).optional(),
   peerDeviceId: z.string().min(20).max(128).optional(),
+  recoveryDevice: deviceIdentitySchema.optional(),
 }).strict();
 
 export type WsSessionInit = z.infer<typeof wsSessionInitSchema>;
@@ -118,10 +116,16 @@ export const clientWsMessageSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("signal"),
+    sessionId: z.string().min(1).max(128).optional(),
     signal: rtcSignalSchema,
   }),
   z.object({
     type: z.literal("connected"),
+    sessionId: z.string().min(1).max(128).optional(),
+  }),
+  z.object({
+    type: z.literal("signaling_stable"),
+    sessionId: z.string().min(1).max(128).optional(),
   }),
 ]);
 
@@ -143,6 +147,7 @@ export const serverWsMessageSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("peer_accepted"),
+    sessionId: z.string().min(1).max(128).optional(),
     peer: deviceIdentitySchema,
     rendezvous: rendezvousInfoSchema,
   }),
@@ -151,6 +156,7 @@ export const serverWsMessageSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("signal"),
+    sessionId: z.string().min(1).max(128).optional(),
     signal: rtcSignalSchema,
   }),
   z.object({

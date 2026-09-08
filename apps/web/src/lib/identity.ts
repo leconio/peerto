@@ -2,7 +2,7 @@ import {
   stablePublicKey,
   type DeviceIdentity,
 } from "@peerto/protocol";
-import { readKeyPair, writeKeyPair } from "./database";
+import { readKeyPair, storeKeyPairIfAbsent } from "./database";
 
 function toBase64Url(bytes: ArrayBuffer): string {
   const binary = Array.from(new Uint8Array(bytes), (byte) =>
@@ -14,7 +14,14 @@ function toBase64Url(bytes: ArrayBuffer): string {
     .replace(/=+$/g, "");
 }
 
-async function getOrCreateKeyPair(): Promise<CryptoKeyPair> {
+let keyPairLoading: Promise<CryptoKeyPair> | undefined;
+
+function getOrCreateKeyPair(): Promise<CryptoKeyPair> {
+  keyPairLoading ??= loadKeyPair().finally(() => { keyPairLoading = undefined; });
+  return keyPairLoading;
+}
+
+async function loadKeyPair(): Promise<CryptoKeyPair> {
   const existing = await readKeyPair();
   if (existing) return existing;
 
@@ -26,8 +33,7 @@ async function getOrCreateKeyPair(): Promise<CryptoKeyPair> {
     false,
     ["sign", "verify"],
   );
-  await writeKeyPair(keyPair);
-  return keyPair;
+  return storeKeyPairIfAbsent(keyPair);
 }
 
 export interface LocalIdentity {

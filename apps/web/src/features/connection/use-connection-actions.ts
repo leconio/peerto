@@ -14,9 +14,9 @@ import {
   type RoomInfo,
   type RuntimeCode,
 } from "../../services/peer";
-import type { ConversationRetryState } from "../../services/conversation-retry";
 import {
   SAVED_CONVERSATION_ID,
+  type KnownPeer,
   type StoredMessage,
 } from "../../store";
 import { runtimeKey } from "../../services/peer/runtime-key";
@@ -28,11 +28,9 @@ export interface ConnectionActionsBindings {
   ipProbing: boolean;
   joinCode: string;
   getPeerClient: (peerId: string) => PeerClient | undefined;
+  getOrCreatePeerClient: (peerId: string) => PeerClient | undefined;
   activatePeerClient: (peerId: string) => void;
   inputRef: RefObject<HTMLTextAreaElement | null>;
-  setConversationRetry: Dispatch<
-    SetStateAction<ConversationRetryState | undefined>
-  >;
   setPeerMenuOpen: Dispatch<SetStateAction<boolean>>;
   setReplyingTo: Dispatch<
     SetStateAction<StoredMessage | undefined>
@@ -57,9 +55,9 @@ export function useConnectionActions({
   ipProbing,
   joinCode,
   getPeerClient,
+  getOrCreatePeerClient,
   activatePeerClient,
   inputRef,
-  setConversationRetry,
   setPeerMenuOpen,
   setReplyingTo,
   setPinnedCursor,
@@ -80,44 +78,35 @@ export function useConnectionActions({
     setSelectedId(id);
     setMobileConversation(true);
     setNotice(undefined);
-    if (id === SAVED_CONVERSATION_ID) {
-      setConversationRetry(undefined);
-    } else {
-      activatePeerClient(id);
-      if (!getPeerClient(id)?.isOnline) {
-        setConversationRetry({
-          peerId: id,
-          attempt: 1,
-          phase: "attempting",
-        });
-      }
-    }
+    if (id !== SAVED_CONVERSATION_ID) activatePeerClient(id);
     window.setTimeout(() => inputRef.current?.focus(), 0);
   };
 
-  const retryConversationImmediately = () => {
-    setConversationRetry((current) => {
-      if (!current) return current;
-      getPeerClient(current.peerId)?.disconnect(false);
-      return {
-        peerId: current.peerId,
-        attempt: current.attempt + 1,
-        phase: "attempting",
-      };
-    });
+  const retryConversation = async (peer: KnownPeer) => {
+    if (!navigator.onLine) return;
+    if (!peer.connectionCode || !peer.connectionToken) {
+      setNotice({ key: "error.PAIRING_REQUIRED" });
+      return;
+    }
+    const peerClient = getOrCreatePeerClient(peer.deviceId);
+    if (!peerClient || peerClient.isOnline || peerClient.isConnecting) return;
+    setNotice(undefined);
+    try {
+      await peerClient.refreshPeer({
+        deviceId: peer.deviceId,
+        code: peer.connectionCode,
+        token: peer.connectionToken,
+      });
+    } catch (error) {
+      // PeerClient owns termination and guards stale operations. The UI only
+      // presents the error; it must not disconnect a newer user attempt.
+      setNotice(errorNotice(error, "error.RECONNECT_ROOM_FAILED"));
+    }
   };
 
-  const cancelConversationRetry = () => {
-    setConversationRetry((current) => {
-      if (current) {
-        getPeerClient(current.peerId)?.disconnect(false);
-        setPeerOffline(
-          current.peerId,
-          navigator.onLine ? "peerOffline" : "networkOffline",
-        );
-      }
-      return undefined;
-    });
+  const cancelConversationConnection = (peerId: string) => {
+    getPeerClient(peerId)?.disconnect(false);
+    setPeerOffline(peerId, navigator.onLine ? "peerOffline" : "networkOffline");
   };
 
   const refreshPublicAddresses = async () => {
@@ -132,7 +121,6 @@ export function useConnectionActions({
 
   const createRoom = async () => {
     if (!client) return;
-    setConversationRetry(undefined);
     setNotice(undefined);
     if (canReuseHostRoom(room, client.activeHostRoomCode)) {
       setConnectionDialog("host");
@@ -172,16 +160,15 @@ export function useConnectionActions({
   const submitJoin = (event: FormEvent) => {
     event.preventDefault();
     if (!client || joinCode.length !== 6) return;
-    setConversationRetry(undefined);
     setRoom(undefined);
     client.join(joinCode);
   };
 
   return {
-    cancelConversationRetry,
+    cancelConversationConnection,
     createRoom,
     refreshPublicAddresses,
-    retryConversationImmediately,
+    retryConversation,
     selectConversation,
     submitJoin,
   };
