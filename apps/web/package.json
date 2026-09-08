@@ -13,13 +13,13 @@
   "dependencies": {
     "@peerto/protocol": "0.1.0",
     "@phosphor-icons/react": "^2.1.10",
-    "i18next": "^26.3.6",
+    "i18next": "^26.4.2",
     "idb": "^8.0.3",
     "qrcode.react": "^4.2.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "react-i18next": "^17.0.11",
-    "zustand": "^5.0.14"
+    "react-i18next": "^17.0.13",
+    "zustand": "^5.0.15"
   },
   "devDependencies": {
     "@types/react": "^19.2.0",
